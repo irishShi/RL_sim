@@ -1,0 +1,72 @@
+# 铁路切换算法环境配置文件
+
+# 动作空间配置（如果 use_hys_ttt=true）
+action_space:
+  hys_set: [1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0]  # Hys 离散集合（dB）
+  ttt_set: [0, 40, 80, 160, 320, 640]  # TTT 离散集合（ms）
+  # 总动作数 = len(hys_set) × len(ttt_set) = 8 × 6 = 48
+  # 如果需要调整动作数量，只需修改上面的列表即可
+
+# 是否使用 Hys/TTT 模式（true=48动作，false=2动作兼容模式）
+use_hys_ttt: true
+
+# 轨道参数
+track_length_m: 3000.0          # 轨道长度（米）
+delta_t_s: 0.05                 # 时间步长（秒，50ms）
+
+# 速度参数（参考 5G‑R 高速铁路场景，车速多在 200~350 km/h）
+random_speed: false             # 是否随机速度
+v_default_kmh: 300.0            # 默认速度（km/h）
+v_min_kmh: 120.0                # 最小速度（km/h）
+v_max_kmh: 350.0                # 最大速度（km/h）
+
+# 发射功率（参考 5G/5G‑R 宏站 40 W 左右功率，约 46 dBm）
+Ptx_A_dbm: 46.0                 # 基站A发射功率（dBm）
+Ptx_B_dbm: 46.0                 # 基站B发射功率（dBm）
+
+# 路径损耗参数（结合 3GPP 38.901 与铁路高架场景取值）
+pl0_A_db: 32.4                  # 基站A参考路径损耗（dB），近似 2 GHz 自由空间 PL(1m)
+pl0_B_db: 32.4                  # 基站B参考路径损耗（dB）
+pathloss_exp_A: 2.7             # 基站A路径损耗指数（开阔高架略大于 2）
+pathloss_exp_B: 2.7             # 基站B路径损耗指数
+shadow_sigma_A: 4.0             # 基站A阴影衰落标准差（dB），比城市宏站略小
+shadow_sigma_B: 4.0             # 基站B阴影衰落标准差（dB）
+shadow_corr_distance_m: 80.0    # 阴影相关距离（m），高铁场景 50~100 m 量级
+
+# 噪声和干扰（20 MHz 带宽、约 5 dB 噪声系数，对应接收热噪声约 -96 dBm）
+noise_dbm: -96.0                # 噪声功率（dBm）
+interference_A_dbm: -100.0      # 基站A干扰功率（dBm），体现同频组网下的小区间干扰
+interference_B_dbm: -100.0      # 基站B干扰功率（dBm）
+
+# L3滤波参数
+l3_alpha: 0.7                    # L3 IIR滤波系数
+
+# Outage阈值
+sinr_outage_db: -8.0            # SINR outage阈值（dB）
+
+# 天气参数范围
+T_min: -10.0                     # 最低温度（摄氏度）
+T_max: 40.0                      # 最高温度（摄氏度）
+H_min: 20.0                      # 最低湿度（%）
+H_max: 100.0                     # 最高湿度（%）
+PM_min: 0.0                      # 最低PM2.5
+PM_max: 300.0                    # 最高PM2.5
+
+# 天气对路径损耗的影响系数
+a_T: 0.02                        # 温度影响系数
+a_H: 0.01                        # 湿度影响系数
+a_PM: 0.002                      # PM2.5影响系数
+
+# 归一化范围
+rsrp_min_dbm: -120.0            # RSRP最小值（dBm）
+rsrp_max_dbm: -60.0             # RSRP最大值（dBm）
+sinr_min_db: -10.0              # SINR最小值（dB）
+sinr_max_db: 20.0               # SINR最大值（dB）
+
+# 奖励参数
+C_outage: 10.0                   # Outage惩罚系数
+C_ho: 0.3                        # 切换惩罚系数
+
+# 切换保护时间
+T_guard_s: 1.0                   # 切换保护时间（秒）
+
