@@ -147,13 +147,13 @@ class SharedFeatureNet(nn.Module):
 
 class RainbowHead(nn.Module):
     """
-    Rainbow Q 头：Dueling + C51 分布 + NoisyLinear
+    Rainbow Q 头：Dueling + C51 分布 + NoisyLinear（可选）
     
     输出每个动作的价值分布（C51）
     """
     
     def __init__(self, feature_dim: int, num_actions: int, num_atoms: int = 51, 
-                 v_min: float = -60.0, v_max: float = 10.0):
+                 v_min: float = -60.0, v_max: float = 10.0, use_noisy: bool = True):
         """
         Args:
             feature_dim: 共享特征维度
@@ -161,6 +161,7 @@ class RainbowHead(nn.Module):
             num_atoms: C51 原子数量
             v_min: 价值最小值
             v_max: 价值最大值
+            use_noisy: 是否使用 NoisyLinear（离线学习时设为 False）
         """
         super(RainbowHead, self).__init__()
         self.num_actions = num_actions
@@ -168,21 +169,31 @@ class RainbowHead(nn.Module):
         self.v_min = v_min
         self.v_max = v_max
         self.delta_z = (v_max - v_min) / (num_atoms - 1)
+        self.use_noisy = use_noisy
         
         # Value stream
-        self.value_fc = NoisyLinear(feature_dim, 256)
-        self.value_out = NoisyLinear(256, num_atoms)
+        if use_noisy:
+            self.value_fc = NoisyLinear(feature_dim, 256)
+            self.value_out = NoisyLinear(256, num_atoms)
+        else:
+            self.value_fc = nn.Linear(feature_dim, 256)
+            self.value_out = nn.Linear(256, num_atoms)
         
         # Advantage stream
-        self.adv_fc = NoisyLinear(feature_dim, 256)
-        self.adv_out = NoisyLinear(256, num_actions * num_atoms)
+        if use_noisy:
+            self.adv_fc = NoisyLinear(feature_dim, 256)
+            self.adv_out = NoisyLinear(256, num_actions * num_atoms)
+        else:
+            self.adv_fc = nn.Linear(feature_dim, 256)
+            self.adv_out = nn.Linear(256, num_actions * num_atoms)
     
     def reset_noise(self):
         """重置所有 NoisyLinear 的噪声"""
-        self.value_fc.reset_noise()
-        self.value_out.reset_noise()
-        self.adv_fc.reset_noise()
-        self.adv_out.reset_noise()
+        if self.use_noisy:
+            self.value_fc.reset_noise()
+            self.value_out.reset_noise()
+            self.adv_fc.reset_noise()
+            self.adv_out.reset_noise()
     
     def forward(self, z: torch.Tensor) -> torch.Tensor:
         """
@@ -273,7 +284,8 @@ class RainbowWithForecast(nn.Module):
     
     def __init__(self, obs_dim: int, num_actions: int, n_steps: int = 15,
                  feature_hidden: int = 256, encoder_hidden: int = 128,
-                 num_atoms: int = 51, v_min: float = -60.0, v_max: float = 10.0):
+                 num_atoms: int = 51, v_min: float = -60.0, v_max: float = 10.0,
+                 use_noisy: bool = True):
         """
         Args:
             obs_dim: 单步观测的特征维度
@@ -284,6 +296,7 @@ class RainbowWithForecast(nn.Module):
             num_atoms: C51 原子数量
             v_min: 价值最小值
             v_max: 价值最大值
+            use_noisy: 是否使用 NoisyLinear（离线学习时设为 False）
         """
         super(RainbowWithForecast, self).__init__()
         
@@ -294,6 +307,7 @@ class RainbowWithForecast(nn.Module):
         self.v_min = v_min
         self.v_max = v_max
         self.delta_z = (v_max - v_min) / (num_atoms - 1)
+        self.use_noisy = use_noisy
         
         # 时序编码器
         self.encoder = TemporalEncoderGRU(
@@ -315,7 +329,8 @@ class RainbowWithForecast(nn.Module):
             num_actions=num_actions,
             num_atoms=num_atoms,
             v_min=v_min,
-            v_max=v_max
+            v_max=v_max,
+            use_noisy=use_noisy
         )
         
         # 辅助预测头

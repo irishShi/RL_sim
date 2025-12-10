@@ -1,6 +1,23 @@
 numpy>=1.21.0
 gymnasium>=0.28.0
 pyyaml>=6.0
-torch>=2.0.0
 matplotlib>=3.5.0
+tqdm>=4.64.0
 
+# PyTorch (CUDA 版本需要单独安装)
+# 检测到您的系统: CUDA 12.9, GPU: NVIDIA GeForce RTX 4070
+# 
+# 推荐安装命令（CUDA 12.4，兼容 CUDA 12.9）:
+# pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+#
+# 或者使用 CUDA 12.1（向后兼容）:
+# pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+#
+# 其他 CUDA 版本:
+# CUDA 11.8: pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+# CPU 版本: pip install torch torchvision torchaudio
+#
+# 最新安装命令请访问: https://pytorch.org/get-started/locally/
+#
+# 安装后验证:
+# python -c "import torch; print(f'PyTorch: {torch.__version__}'); print(f'CUDA available: {torch.cuda.is_available()}'); print(f'CUDA version: {torch.version.cuda if torch.cuda.is_available() else \"N/A\"}'); print(f'GPU: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else \"N/A\"}')"
