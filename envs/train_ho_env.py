@@ -102,6 +102,9 @@ class TrainHandoverEnv(gym.Env):
         self.last_rsrp_serv = None
         self.last_rsrp_neig = None
         self.last_sinr_serv = None
+        
+        # 6) 切换中断状态
+        self.ho_interruption_remaining = 0  # 剩余中断时隙数（0表示无中断）
     
     def _init_default_action_space(self, hys_set=None, ttt_set=None):
         """
@@ -197,6 +200,10 @@ class TrainHandoverEnv(gym.Env):
             "C_ho": 0.3,
             
             "T_guard_s": 1.0,
+            
+            # 切换中断配置
+            "ho_interruption_slots": 1,  # 切换导致的通信中断时隙数（默认1个时隙）
+            "ho_interruption_sinr_db": -20.0,  # 中断期间的SINR值（dB），设置为很低的值
 
             # 快衰落控制（38.901 多径的小尺度衰落，简化为 Rayleigh / Rician）
             "enable_fast_fading": False,
@@ -252,6 +259,9 @@ class TrainHandoverEnv(gym.Env):
         # 4) 重置切换逻辑
         self.ho_logic.reset()
         
+        # 5) 重置切换中断状态
+        self.ho_interruption_remaining = 0
+        
         obs = self._build_observation()
         info = {}
         return obs, info
@@ -276,11 +286,7 @@ class TrainHandoverEnv(gym.Env):
         current_time = self.time_step * dt
         self.position_m += self.velocity_mps * dt
         
-        # 2) 处理 HO 行为
-        ho_executed = False
-        old_serving_cell = self.serving_cell
-        
-        # 2) 处理 HO 行为
+        # 2) 处理 HO 行为（先处理切换，以便在切换发生的时隙立即应用中断）
         ho_executed = False
         old_serving_cell = self.serving_cell
         need_recompute_link = False  # 标记是否需要重新计算链路
@@ -311,6 +317,8 @@ class TrainHandoverEnv(gym.Env):
             
             if ho_executed:
                 self.serving_cell = new_cell
+                # 切换发生，设置中断时隙数（中断在切换发生的时隙立即开始）
+                self.ho_interruption_remaining = self.cfg.get("ho_interruption_slots", 1)
                 need_recompute_link = True  # 切换后需要重新计算链路
             else:
                 # 未切换，可以复用之前计算的结果
@@ -326,6 +334,14 @@ class TrainHandoverEnv(gym.Env):
                 new_cell, ho_executed = self.ho_logic.execute_handover(current_time, self.serving_cell)
                 if ho_executed:
                     self.serving_cell = new_cell
+                    # 切换发生，设置中断时隙数（中断在切换发生的时隙立即开始）
+                    self.ho_interruption_remaining = self.cfg.get("ho_interruption_slots", 1)
+        
+        # 2.5) 检查并更新切换中断状态（在切换处理后检查，以便在切换发生的时隙立即应用中断）
+        in_interruption = False
+        if self.ho_interruption_remaining > 0:
+            in_interruption = True
+            self.ho_interruption_remaining -= 1
         
         # 3) 计算链路（位置/天气 -> 路损 -> RSRP/SINR）
         # 注意：即使未切换，由于位置变化，链路也会变化，所以总是需要重新计算
@@ -339,6 +355,10 @@ class TrainHandoverEnv(gym.Env):
             rsrp_serv_raw = rsrp_B
             rsrp_neig_raw = rsrp_A
             sinr_serv_raw = sinr_B
+        
+        # 3.5) 如果处于切换中断期间，将SINR设置为中断值
+        if in_interruption:
+            sinr_serv_raw = self.cfg.get("ho_interruption_sinr_db", -20.0)
         
         # 4) L3 IIR 滤波
         # 重要：如果发生切换，需要重置L3滤波状态，避免使用错误的历史值
@@ -365,6 +385,7 @@ class TrainHandoverEnv(gym.Env):
             self.last_sinr_serv = sinr_serv
         
         # 5) outage & 终止判定
+        # 注意：中断期间也会触发outage检查（因为SINR很低）
         outage = self.ho_logic.check_outage(sinr_serv)
         arrived = self.position_m >= self.cfg["track_length_m"]
         terminated = bool(outage or arrived)
@@ -374,7 +395,8 @@ class TrainHandoverEnv(gym.Env):
         reward = self._compute_reward(
             sinr_serv=sinr_serv,
             outage=outage,
-            ho_executed=ho_executed
+            ho_executed=ho_executed,
+            in_interruption=in_interruption
         )
         
         # 7) 构建下一状态
@@ -397,6 +419,9 @@ class TrainHandoverEnv(gym.Env):
             "rsrp_B_dbm": rsrp_B,
             # 添加 ΔRSRP（用于辅助预测）
             "delta_rsrp_dbm": delta_rsrp_dbm,
+            # 切换中断状态
+            "in_interruption": in_interruption,
+            "ho_interruption_remaining": self.ho_interruption_remaining,
         }
         
         # 如果使用 Hys/TTT 模式，添加当前参数
@@ -447,7 +472,7 @@ class TrainHandoverEnv(gym.Env):
         
         return obs
     
-    def _compute_reward(self, sinr_serv: float, outage: bool, ho_executed: bool) -> float:
+    def _compute_reward(self, sinr_serv: float, outage: bool, ho_executed: bool, in_interruption: bool = False) -> float:
         """
         计算奖励
         
@@ -455,6 +480,7 @@ class TrainHandoverEnv(gym.Env):
             sinr_serv: 服务小区SINR（dB）
             outage: 是否发生outage
             ho_executed: 是否执行了切换
+            in_interruption: 是否处于切换中断期间
             
         Returns:
             奖励值
@@ -470,6 +496,11 @@ class TrainHandoverEnv(gym.Env):
         
         if ho_executed:
             reward -= self.cfg["C_ho"]      # 比如 0.3
+        
+        # 切换中断期间的额外惩罚（中断本身已经导致SINR很低，这里可以额外惩罚）
+        if in_interruption:
+            C_interruption = self.cfg.get("C_interruption", 0.0)  # 中断惩罚系数（默认0，因为SINR已经很低）
+            reward -= C_interruption
         
         return float(reward)
     
