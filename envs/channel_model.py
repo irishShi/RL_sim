@@ -129,6 +129,12 @@ class ChannelModel:
     def compute_link_metrics(self, x_m: float) -> Tuple[float, float, float, float]:
         """
         给定位置 x（0~D），计算 RSRP 和 SINR
+        
+        基于 5G-R 高速铁路场景，同频干扰动态建模：
+        根据公式 I(d) = 10^(Pr1(d)/10) + 10^(Pr2(d)/10)
+        - 当UE连接到基站A时，基站B的同频信号产生干扰：I_A = 10^(rsrp_B/10)
+        - 当UE连接到基站B时，基站A的同频信号产生干扰：I_B = 10^(rsrp_A/10)
+        - 干扰功率与UE位置动态相关，随两个基站信号强度变化
 
         Args:
             x_m: 列车位置（米）
@@ -151,29 +157,60 @@ class ChannelModel:
         rsrp_A = Ptx_A - pl_A
         rsrp_B = Ptx_B - pl_B
 
-        # 3) 噪声+干扰（简化）
+        # 3) 噪声功率
         noise_dbm = self.cfg["noise_dbm"]
-        inter_A_dbm = self.cfg["interference_A_dbm"]
-        inter_B_dbm = self.cfg["interference_B_dbm"]
-
-        # 线性功率求和 (dBm -> mW)
+        
+        # 线性功率转换函数 (dBm -> mW)
         def dbm_to_mw(dbm):
             return 10 ** (dbm / 10.0)
-
-        noise_A_mw = dbm_to_mw(noise_dbm) + dbm_to_mw(inter_A_dbm)
-        noise_B_mw = dbm_to_mw(noise_dbm) + dbm_to_mw(inter_B_dbm)
-
-        sig_A_mw = dbm_to_mw(rsrp_A)
-        sig_B_mw = dbm_to_mw(rsrp_B)
-
-        snr_A = sig_A_mw / noise_A_mw
-        snr_B = sig_B_mw / noise_B_mw
-
+        
         def linear_to_db(x):
             return 10 * np.log10(x + 1e-12)
 
-        sinr_A_db = linear_to_db(snr_A)
-        sinr_B_db = linear_to_db(snr_B)
+        noise_mw = dbm_to_mw(noise_dbm)
+        
+        # 4) 动态同频干扰建模（基于公式 I(d) = 10^(Pr1(d)/10) + 10^(Pr2(d)/10)）
+        # 是否启用动态干扰（默认启用）
+        use_dynamic_interference = self.cfg.get("use_dynamic_interference", True)
+        
+        if use_dynamic_interference:
+            # 根据公式：同频干扰 = 10^(Pr1/10) + 10^(Pr2/10)
+            # 对于基站A：干扰来自基站B的信号（Pr2 = rsrp_B）
+            # 对于基站B：干扰来自基站A的信号（Pr1 = rsrp_A）
+            
+            # 基站A受到的干扰 = 基站B的信号功率（线性域）
+            interference_A_mw = dbm_to_mw(rsrp_B)
+            
+            # 基站B受到的干扰 = 基站A的信号功率（线性域）
+            interference_B_mw = dbm_to_mw(rsrp_A)
+            
+            # 如果配置了额外的同频基站干扰，可以叠加
+            if self.cfg.get("enable_extra_interference", False):
+                extra_interference_dbm = self.cfg.get("extra_interference_dbm", -105.0)
+                extra_interference_mw = dbm_to_mw(extra_interference_dbm)
+                interference_A_mw += extra_interference_mw
+                interference_B_mw += extra_interference_mw
+            
+            # 总噪声+干扰（线性功率叠加）
+            noise_plus_interference_A_mw = noise_mw + interference_A_mw
+            noise_plus_interference_B_mw = noise_mw + interference_B_mw
+        else:
+            # 静态干扰：使用固定干扰功率（向后兼容）
+            inter_A_dbm = self.cfg.get("interference_A_dbm", -100.0)
+            inter_B_dbm = self.cfg.get("interference_B_dbm", -100.0)
+            
+            noise_plus_interference_A_mw = noise_mw + dbm_to_mw(inter_A_dbm)
+            noise_plus_interference_B_mw = noise_mw + dbm_to_mw(inter_B_dbm)
+
+        # 5) 计算 SINR
+        sig_A_mw = dbm_to_mw(rsrp_A)
+        sig_B_mw = dbm_to_mw(rsrp_B)
+
+        sinr_A = sig_A_mw / noise_plus_interference_A_mw
+        sinr_B = sig_B_mw / noise_plus_interference_B_mw
+
+        sinr_A_db = linear_to_db(sinr_A)
+        sinr_B_db = linear_to_db(sinr_B)
 
         return rsrp_A, rsrp_B, sinr_A_db, sinr_B_db
 

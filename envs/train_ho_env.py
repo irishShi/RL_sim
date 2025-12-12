@@ -162,9 +162,15 @@ class TrainHandoverEnv(gym.Env):
             
             # 约 20 MHz 带宽、5 dB 噪声系数，对应接收热噪声约 -96 dBm
             "noise_dbm": -96.0,
-            # 同频组网下的小区间干扰，略低于噪声
-            "interference_A_dbm": -100.0,
-            "interference_B_dbm": -100.0,
+            
+            # 同频干扰配置（基于公式 I(d) = 10^(Pr1(d)/10) + 10^(Pr2(d)/10)）
+            "use_dynamic_interference": True,  # 启用动态同频干扰（基于位置动态计算）
+            "enable_extra_interference": False,  # 是否启用额外同频基站干扰
+            "extra_interference_dbm": -105.0,  # 其他同频基站的额外干扰功率（dBm）
+            
+            # 静态干扰配置（仅当 use_dynamic_interference=False 时使用）
+            "interference_A_dbm": -100.0,  # 基站A固定干扰功率（dBm）
+            "interference_B_dbm": -100.0,  # 基站B固定干扰功率（dBm）
             
             "l3_alpha": 0.7,
             
