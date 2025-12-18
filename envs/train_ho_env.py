@@ -198,12 +198,13 @@ class TrainHandoverEnv(gym.Env):
             
             "C_outage": 10.0,
             "C_ho": 0.3,
+            "C_interruption": 0.0,  # 切换中断惩罚系数（默认0，因为中断期间SINR已经很低）
             
             "T_guard_s": 1.0,
             
             # 切换中断配置
-            "ho_interruption_slots": 1,  # 切换导致的通信中断时隙数（默认1个时隙）
-            "ho_interruption_sinr_db": -20.0,  # 中断期间的SINR值（dB），设置为很低的值
+            "ho_interruption_slots": 1,  # 切换导致的通信中断时隙数（默认1个时隙，即50ms）
+            "ho_interruption_sinr_db": -20.0,  # 中断期间的SINR值（dB），设置为很低的值以模拟通信中断
 
             # 快衰落控制（38.901 多径的小尺度衰落，简化为 Rayleigh / Rician）
             "enable_fast_fading": False,
@@ -385,10 +386,10 @@ class TrainHandoverEnv(gym.Env):
             self.last_sinr_serv = sinr_serv
         
         # 5) outage & 终止判定
-        # 注意：中断期间也会触发outage检查（因为SINR很低）
+        # 检查outage（这里仅用于统计和奖励，不再用于终止，确保轨迹完整到终点）
         outage = self.ho_logic.check_outage(sinr_serv)
         arrived = self.position_m >= self.cfg["track_length_m"]
-        terminated = bool(outage or arrived)
+        terminated = bool(arrived)  # 仅到达终点时终止，不因 outage 终止
         truncated = False  # 可以加最大步数等逻辑
         
         # 6) 奖励
@@ -422,6 +423,8 @@ class TrainHandoverEnv(gym.Env):
             # 切换中断状态
             "in_interruption": in_interruption,
             "ho_interruption_remaining": self.ho_interruption_remaining,
+            # 区分真正的outage和中断期间的outage（中断期间的outage不会终止episode）
+            "outage_during_interruption": bool(outage and in_interruption),
         }
         
         # 如果使用 Hys/TTT 模式，添加当前参数
