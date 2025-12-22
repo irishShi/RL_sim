@@ -205,6 +205,7 @@ class TrainHandoverEnv(gym.Env):
             # 切换中断配置
             "ho_interruption_slots": 1,  # 切换导致的通信中断时隙数（默认1个时隙，即50ms）
             "ho_interruption_sinr_db": -20.0,  # 中断期间的SINR值（dB），设置为很低的值以模拟通信中断
+            "ho_interruption_rsrp_dbm": -120.0,  # 中断期间的RSRP值（dBm），设置为很低的值以模拟通信中断
 
             # 快衰落控制（38.901 多径的小尺度衰落，简化为 Rayleigh / Rician）
             "enable_fast_fading": False,
@@ -357,9 +358,10 @@ class TrainHandoverEnv(gym.Env):
             rsrp_neig_raw = rsrp_A
             sinr_serv_raw = sinr_B
         
-        # 3.5) 如果处于切换中断期间，将SINR设置为中断值
+        # 3.5) 如果处于切换中断期间，将SINR和RSRP设置为中断值
         if in_interruption:
             sinr_serv_raw = self.cfg.get("ho_interruption_sinr_db", -20.0)
+            rsrp_serv_raw = self.cfg.get("ho_interruption_rsrp_dbm", -120.0)
         
         # 4) L3 IIR 滤波
         # 重要：如果发生切换，需要重置L3滤波状态，避免使用错误的历史值

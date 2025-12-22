@@ -87,4 +87,5 @@ T_guard_s: 1.0                   # 切换保护时间（秒）
 # 切换中断配置
 ho_interruption_slots: 1        # 切换导致的通信中断时隙数（默认1个时隙，即50ms）
 ho_interruption_sinr_db: -20.0   # 中断期间的SINR值（dB），设置为很低的值以模拟通信中断
+ho_interruption_rsrp_dbm: -120.0  # 中断期间的RSRP值（dBm），设置为很低的值以模拟通信中断
 
