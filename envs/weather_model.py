@@ -23,7 +23,7 @@ class WeatherModel:
         采样天气参数
         
         Args:
-            seed: 随机种子
+            seed: 随机种子（如果为None，使用当前随机数生成器状态）
         """
         if seed is not None:
             np.random.seed(seed)

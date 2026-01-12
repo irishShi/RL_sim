@@ -1,6 +1,6 @@
 """信道模型：路径损耗、阴影衰落、RSRP/SINR计算（含 3GPP TR 38.901 风格增强）"""
 import numpy as np
-from typing import Tuple, Dict
+from typing import Tuple, Dict, Optional
 from .weather_model import WeatherModel
 
 
@@ -25,6 +25,19 @@ class ChannelModel:
         self.weather_model = weather_model
 
         # 相关阴影衰落状态（按距离相关，而不是每步独立采样）
+        self._shadow_A_db = 0.0
+        self._shadow_B_db = 0.0
+        self._last_pos_m = None
+    
+    def reset(self, seed: Optional[int] = None):
+        """
+        重置阴影衰落状态（在环境reset时调用）
+        确保每次reset后阴影衰落从初始状态开始
+        
+        Args:
+            seed: 随机种子（如果为None，使用当前随机数生成器状态）
+                  如果提供，会重新设置seed并采样初始值
+        """
         self._shadow_A_db = 0.0
         self._shadow_B_db = 0.0
         self._last_pos_m = None

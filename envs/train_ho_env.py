@@ -234,22 +234,39 @@ class TrainHandoverEnv(gym.Env):
             (观测, 信息字典)
         """
         super().reset(seed=seed)
+        
+        # 关键：只设置一次seed，然后按固定顺序使用随机数
+        # 这样可以确保相同的seed总是生成相同的场景
+        # 随机数使用顺序（固定）：
+        #   1. 速度采样（如果random_speed=True，消耗1个；否则跳过但保持位置）
+        #   2-4. 天气采样（温度、湿度、PM2.5，消耗3个）
+        #   5-6. 阴影衰落初始值（阴影A、阴影B，消耗2个）
         if seed is not None:
             np.random.seed(seed)
         
         # 1) 位置和速度
         self.position_m = 0.0
         if self.cfg["random_speed"]:
+            # 消耗第1个随机数
             v_kmh = np.random.uniform(self.cfg["v_min_kmh"], self.cfg["v_max_kmh"])
         else:
+            # 即使不使用随机速度，也消耗一个随机数，确保后续随机数位置一致
+            # 这样无论random_speed设置如何，天气和阴影衰落都使用相同的随机数位置
+            _ = np.random.uniform(0.0, 1.0)  # 消耗第1个随机数（丢弃）
             v_kmh = self.cfg["v_default_kmh"]
         self.velocity_mps = v_kmh / 3.6
         
         self.time_step = 0
         self.serving_cell = 0  # 默认在 A 小区
         
-        # 2) 采样天气
-        self.weather_model.sample_weather(seed=seed)
+        # 2) 采样天气（消耗第2-4个随机数：温度、湿度、PM2.5）
+        # 注意：不重新设置seed，使用当前随机数生成器的状态
+        self.weather_model.sample_weather(seed=None)
+        
+        # 2.5) 重置信道模型的阴影衰落状态
+        # 阴影衰落初始值采样（消耗第5-6个随机数：阴影A、阴影B）
+        # 注意：不重新设置seed，使用当前随机数生成器的状态
+        self.channel_model.reset(seed=None)
         
         # 3) 初始化上一时刻测量（用于 IIR 滤波）
         rsrp_A, rsrp_B, sinr_A, sinr_B = self.channel_model.compute_link_metrics(self.position_m)
