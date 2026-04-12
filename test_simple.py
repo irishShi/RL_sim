@@ -13,6 +13,7 @@ import yaml
 import matplotlib.pyplot as plt
 from envs.train_ho_env import TrainHandoverEnv
 from models import RainbowWithForecast, ActionSpace, ObservationWindow
+from utils.scenario_generator import ScenarioGenerator
 
 # 配置 matplotlib 支持中文显示
 plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'DejaVu Sans']
@@ -88,7 +89,8 @@ class TraditionalA3Policy:
 
 
 def run_episode(env, policy_func, policy_name: str, obs_window: ObservationWindow = None,
-                model: RainbowWithForecast = None, device: str = 'cpu', seed: int = 42) -> dict:
+                model: RainbowWithForecast = None, device: str = 'cpu', seed: int = 42,
+                scenario_data: dict = None, a3_policy: TraditionalA3Policy = None) -> dict:
     """
     运行一个 episode
     
@@ -99,12 +101,17 @@ def run_episode(env, policy_func, policy_name: str, obs_window: ObservationWindo
         obs_window: 观测窗口（用于 Rainbow 模型）
         model: Rainbow 模型（如果使用）
         device: 设备
-        seed: 随机种子
+        seed: 随机种子（如果scenario_data为None，则使用此seed生成场景）
+        scenario_data: 预生成的场景数据（如果提供，将使用此场景数据）
         
     Returns:
         轨迹数据字典
     """
-    obs_raw, info = env.reset(seed=seed)
+    # 如果提供了场景数据，使用场景数据；否则使用seed
+    if scenario_data is not None:
+        obs_raw, info = env.reset(seed=None, options={"scenario_data": scenario_data})
+    else:
+        obs_raw, info = env.reset(seed=seed)
     
     # 初始化观测窗口（如果使用）
     if obs_window is not None:
@@ -157,6 +164,14 @@ def run_episode(env, policy_func, policy_name: str, obs_window: ObservationWindo
             )
         
         # 记录轨迹
+        # 对于A3策略，如果info中没有参数，从policy对象中获取
+        current_hys = info.get("current_hys", None)
+        current_ttt = info.get("current_ttt", None)
+        if current_hys is None and a3_policy is not None:
+            current_hys = a3_policy.hys_db
+        if current_ttt is None and a3_policy is not None:
+            current_ttt = a3_policy.ttt_ms
+        
         trajectory.append({
             "step": step_count,
             "x": info.get("position_m", 0.0),
@@ -167,6 +182,8 @@ def run_episode(env, policy_func, policy_name: str, obs_window: ObservationWindo
             "rsrp_neig_dbm": info.get("rsrp_neig_dbm", 0.0),
             "sinr_serv_db": info.get("sinr_serv_db", 0.0),
             "ho_executed": info.get("ho_executed", False),
+            "current_hys": current_hys,
+            "current_ttt": current_ttt,
         })
         
         obs_raw = next_obs_raw
@@ -176,11 +193,13 @@ def run_episode(env, policy_func, policy_name: str, obs_window: ObservationWindo
     
     return {
         "policy_name": policy_name,
-        "trajectory": trajectory
+        "trajectory": trajectory,
+        "last_info": info  # 保存最后一步的info，可能包含KPI
     }
 
 
-def plot_comparison(traj_a3: dict, traj_rl: dict, output_path: str = "test_comparison.png"):
+def plot_comparison(traj_a3: dict, traj_rl: dict, output_path: str = "test_comparison.png",
+                    a3_hys: float = 3.0, a3_ttt: float = 160.0):
     """
     绘制A3和RL策略的RSRP曲线和切换点对比图
     
@@ -188,6 +207,8 @@ def plot_comparison(traj_a3: dict, traj_rl: dict, output_path: str = "test_compa
         traj_a3: A3策略的轨迹数据
         traj_rl: RL策略的轨迹数据
         output_path: 输出图片路径
+        a3_hys: A3策略的Hys参数（dB）
+        a3_ttt: A3策略的TTT参数（ms）
     """
     traj_a3_list = traj_a3['trajectory']
     traj_rl_list = traj_rl['trajectory']
@@ -208,11 +229,18 @@ def plot_comparison(traj_a3: dict, traj_rl: dict, output_path: str = "test_compa
         if p['ho_executed']:
             ho_y_a3.append(p['rsrp_A_dbm'] if p['serving_cell'] == 0 else p['rsrp_B_dbm'])
     
-    ho_x_rl = [p['x'] for p in traj_rl_list if p['ho_executed']]
+    # 提取RL策略的切换点及其对应的Hys和TTT参数
+    ho_x_rl = []
     ho_y_rl = []
+    ho_hys_rl = []  # 每个切换点对应的Hys
+    ho_ttt_rl = []  # 每个切换点对应的TTT
     for p in traj_rl_list:
         if p['ho_executed']:
+            ho_x_rl.append(p['x'])
             ho_y_rl.append(p['rsrp_A_dbm'] if p['serving_cell'] == 0 else p['rsrp_B_dbm'])
+            # 获取切换点时的Hys和TTT（使用当前步的参数）
+            ho_hys_rl.append(p.get('current_hys', None))
+            ho_ttt_rl.append(p.get('current_ttt', None))
     
     # 创建图形
     fig, axes = plt.subplots(2, 1, figsize=(12, 9), sharex=True)
@@ -225,7 +253,10 @@ def plot_comparison(traj_a3: dict, traj_rl: dict, output_path: str = "test_compa
         ax1.scatter(ho_x_a3, ho_y_a3, s=100, color='green', edgecolors='black', 
                    linewidths=1.0, label='A3 切换点', zorder=5)
     ax1.set_ylabel("RSRP / dBm")
-    ax1.set_title("传统A3切换算法")
+    
+    # 添加A3策略的参数标注
+    a3_title = f"传统A3切换算法 (Hys={a3_hys:.1f}dB, TTT={a3_ttt:.0f}ms)"
+    ax1.set_title(a3_title)
     ax1.grid(True, alpha=0.3)
     ax1.legend(fontsize=9, loc='best')
     
@@ -236,6 +267,47 @@ def plot_comparison(traj_a3: dict, traj_rl: dict, output_path: str = "test_compa
     if ho_x_rl:
         ax2.scatter(ho_x_rl, ho_y_rl, s=100, color='red', edgecolors='black', 
                    linewidths=1.0, label='RL 切换点', zorder=5)
+        
+        # 在每个切换点附近标注Hys和TTT参数
+        y_min = min(min(rsrp_A_rl), min(rsrp_B_rl))
+        y_max = max(max(rsrp_A_rl), max(rsrp_B_rl))
+        y_range = y_max - y_min
+        text_offset_y = y_range * 0.08  # 文本垂直偏移量（相对于y轴范围）
+        
+        for i, (x, y, hys, ttt) in enumerate(zip(ho_x_rl, ho_y_rl, ho_hys_rl, ho_ttt_rl)):
+            # 构建标注文本
+            if hys is not None and ttt is not None:
+                label_text = f"Hys={hys:.1f}dB\nTTT={ttt:.0f}ms"
+            elif hys is not None:
+                label_text = f"Hys={hys:.1f}dB"
+            elif ttt is not None:
+                label_text = f"TTT={ttt:.0f}ms"
+            else:
+                label_text = ""
+            
+            if label_text:
+                # 根据切换点位置调整文本位置，避免重叠
+                # 交替在上下方显示，避免重叠
+                if i % 2 == 0:
+                    text_y = y + text_offset_y
+                    va = 'bottom'
+                else:
+                    text_y = y - text_offset_y
+                    va = 'top'
+                
+                # 添加文本标注
+                ax2.annotate(
+                    label_text,
+                    xy=(x, y),
+                    xytext=(x, text_y),
+                    fontsize=8,
+                    ha='center',
+                    va=va,
+                    bbox=dict(boxstyle='round,pad=0.3', facecolor='yellow', alpha=0.7, edgecolor='black', linewidth=0.5),
+                    arrowprops=dict(arrowstyle='->', color='black', lw=0.5, alpha=0.5),
+                    zorder=6
+                )
+    
     ax2.set_xlabel("距离 x / m")
     ax2.set_ylabel("RSRP / dBm")
     ax2.set_title("离线训练 Rainbow DQN")
@@ -323,22 +395,36 @@ def main():
     def a3_policy_func(obs, info, dt):
         return a3_policy.decide(obs, info, dt)
     
-    # 8. 使用相同的seed运行两个策略
+    # 8. 生成场景数据（确保两个策略使用相同的场景）
     seed = 10000
-    print(f"\n使用seed={seed}运行两个策略（确保环境状态一致）")
+    print(f"\n生成场景数据（seed={seed}）...")
+    
+    # 创建场景生成器
+    scenario_gen = ScenarioGenerator(env_a3.cfg)
+    scenario_data = scenario_gen.generate_scenario(seed=seed, position_resolution_m=1.0)
+    
+    # 可选：保存场景数据
+    scenario_dir = os.path.join(base_dir, "scenarios")
+    os.makedirs(scenario_dir, exist_ok=True)
+    scenario_path = os.path.join(scenario_dir, f"scenario_seed_{seed}.pkl")
+    scenario_gen.save_scenario(scenario_data, scenario_path)
+    print(f"场景数据已保存至: {scenario_path}")
+    
+    print(f"\n使用相同场景数据运行两个策略（确保环境状态完全一致）")
     
     print("\n运行传统A3策略...")
     traj_a3 = run_episode(
         env_a3, a3_policy_func,
         "A3 (Hys=3.0dB, TTT=160ms)",
-        obs_window=None, model=None, device=device, seed=seed
+        obs_window=None, model=None, device=device, seed=None, scenario_data=scenario_data,
+        a3_policy=a3_policy
     )
     
     print("运行离线训练 Rainbow DQN...")
     traj_rl = run_episode(
         env_rl, None,
         "离线训练 Rainbow DQN",
-        obs_window=obs_window, model=model, device=device, seed=seed
+        obs_window=obs_window, model=model, device=device, seed=None, scenario_data=scenario_data
     )
     
     # 9. 打印统计信息
@@ -351,7 +437,7 @@ def main():
     
     # 10. 绘制对比图
     output_path = os.path.join(base_dir, "test_comparison.png")
-    plot_comparison(traj_a3, traj_rl, output_path)
+    plot_comparison(traj_a3, traj_rl, output_path, a3_hys=a3_hys, a3_ttt=a3_ttt)
     
     print("\n" + "=" * 80)
     print("测试完成！")

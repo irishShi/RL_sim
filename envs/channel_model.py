@@ -28,8 +28,12 @@ class ChannelModel:
         self._shadow_A_db = 0.0
         self._shadow_B_db = 0.0
         self._last_pos_m = None
+        
+        # 预生成的场景数据（如果使用）
+        self._scenario_data = None
+        self._use_scenario = False
     
-    def reset(self, seed: Optional[int] = None):
+    def reset(self, seed: Optional[int] = None, scenario_data: Optional[Dict] = None):
         """
         重置阴影衰落状态（在环境reset时调用）
         确保每次reset后阴影衰落从初始状态开始
@@ -37,16 +41,41 @@ class ChannelModel:
         Args:
             seed: 随机种子（如果为None，使用当前随机数生成器状态）
                   如果提供，会重新设置seed并采样初始值
+            scenario_data: 预生成的场景数据（如果使用，将从此数据中读取阴影衰落）
         """
         self._shadow_A_db = 0.0
         self._shadow_B_db = 0.0
         self._last_pos_m = None
+        
+        # 设置场景数据
+        if scenario_data is not None:
+            self._scenario_data = scenario_data
+            self._use_scenario = True
+        else:
+            self._scenario_data = None
+            self._use_scenario = False
 
     # -----------------------
     # 大尺度衰落：路径损耗 + 相关阴影
     # -----------------------
     def _update_shadowing(self, x_m: float):
         """根据 3GPP 38.901 思路实现距离相关的阴影衰落（简化版）"""
+        # 如果使用预生成的场景数据，从场景数据中读取阴影衰落
+        if self._use_scenario and self._scenario_data is not None:
+            positions = self._scenario_data["positions"]
+            shadow_A_seq = self._scenario_data["shadow_A"]
+            shadow_B_seq = self._scenario_data["shadow_B"]
+            
+            # 限制位置范围
+            x_m_clipped = np.clip(x_m, positions[0], positions[-1])
+            
+            # 线性插值获取阴影衰落值
+            self._shadow_A_db = float(np.interp(x_m_clipped, positions, shadow_A_seq))
+            self._shadow_B_db = float(np.interp(x_m_clipped, positions, shadow_B_seq))
+            self._last_pos_m = x_m
+            return
+        
+        # 否则，使用原来的实时生成方法
         d_corr = self.cfg.get("shadow_corr_distance_m", 50.0)  # 相关距离，默认 50 m
 
         if self._last_pos_m is None:

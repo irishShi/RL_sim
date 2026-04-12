@@ -14,6 +14,7 @@ class HandoverLogic:
         """
         self.cfg = config
         self.last_ho_time = -1e9  # 很远的过去
+        self.last_ho_position = None  # 最后一次切换的位置（用于距离模式）
         
         # A3 事件和 TTT 相关状态
         self.current_hys = 3.0  # 当前 Hys 参数（dB）
@@ -21,18 +22,33 @@ class HandoverLogic:
         self.ttt_timer = 0.0  # TTT 计时器（秒）
         self.a3_condition_met = False  # A3 事件条件是否满足
     
-    def can_handover(self, current_time: float) -> bool:
+    def can_handover(self, current_time: float, current_position: float = None) -> bool:
         """
-        判断是否可以执行切换（检查保护时间）
+        判断是否可以执行切换（检查保护时间或保护距离）
         
         Args:
             current_time: 当前时间（秒）
+            current_position: 当前位置（米），用于距离模式
             
         Returns:
             是否可以切换
         """
-        time_since_last_ho = current_time - self.last_ho_time
-        return time_since_last_ho >= self.cfg["T_guard_s"]
+        tts_mode = self.cfg.get("TTS_mode", "time")
+        
+        if tts_mode == "distance" and current_position is not None:
+            # 距离模式：检查是否超过保护距离
+            if not hasattr(self, 'last_ho_position') or self.last_ho_position is None:
+                self.last_ho_position = current_position
+                return True  # 首次切换允许
+            
+            distance_since_last_ho = abs(current_position - self.last_ho_position)
+            T_guard_m = self.cfg.get("T_guard_m", 50.0)
+            return distance_since_last_ho >= T_guard_m
+        else:
+            # 时间模式（默认）
+            time_since_last_ho = current_time - self.last_ho_time
+            T_guard_s = self.cfg.get("T_guard_s", 1.0)
+            return time_since_last_ho >= T_guard_s
     
     def update_hys_ttt(self, hys: float, ttt: float):
         """
@@ -88,25 +104,28 @@ class HandoverLogic:
         
         return False
     
-    def execute_handover(self, current_time: float, serving_cell: int) -> Tuple[int, bool]:
+    def execute_handover(self, current_time: float, serving_cell: int, current_position: float = None) -> Tuple[int, bool]:
         """
         执行切换（旧接口，保持兼容）
         
         Args:
             current_time: 当前时间（秒）
             serving_cell: 当前服务小区 (0: A, 1: B)
+            current_position: 当前位置（米），用于距离模式
             
         Returns:
             (新的服务小区, 是否成功执行切换)
         """
-        if self.can_handover(current_time):
+        if self.can_handover(current_time, current_position):
             new_cell = 1 - serving_cell  # A<->B 切换
             self.last_ho_time = current_time
+            if current_position is not None:
+                self.last_ho_position = current_position
             return new_cell, True
         return serving_cell, False
     
     def execute_handover_with_a3(self, current_time: float, serving_cell: int, 
-                                  delta_rsrp: float, dt: float) -> Tuple[int, bool]:
+                                  delta_rsrp: float, dt: float, current_position: float = None) -> Tuple[int, bool]:
         """
         执行切换（新接口，支持 A3 事件和 TTT）
         
@@ -115,6 +134,7 @@ class HandoverLogic:
             serving_cell: 当前服务小区 (0: A, 1: B)
             delta_rsrp: RSRP 差值（dB）
             dt: 时间步长（秒）
+            current_position: 当前位置（米），用于距离模式
             
         Returns:
             (新的服务小区, 是否成功执行切换)
@@ -122,10 +142,12 @@ class HandoverLogic:
         # 检查 A3 事件和 TTT
         should_handover = self.check_a3_event(delta_rsrp, dt)
         
-        # 如果满足切换条件且通过保护时间检查，执行切换
-        if should_handover and self.can_handover(current_time):
+        # 如果满足切换条件且通过保护时间/距离检查，执行切换
+        if should_handover and self.can_handover(current_time, current_position):
             new_cell = 1 - serving_cell  # A<->B 切换
             self.last_ho_time = current_time
+            if current_position is not None:
+                self.last_ho_position = current_position
             return new_cell, True
         
         return serving_cell, False
@@ -145,6 +167,7 @@ class HandoverLogic:
     def reset(self):
         """重置切换逻辑状态"""
         self.last_ho_time = -1e9
+        self.last_ho_position = None
         self.current_hys = 3.0
         self.current_ttt = 160.0
         self.ttt_timer = 0.0
