@@ -105,6 +105,33 @@ class TrainHandoverEnv(gym.Env):
         
         # 6) 切换中断状态
         self.ho_interruption_remaining = 0  # 剩余中断时隙数（0表示无中断）
+        
+        # 7) Outage/RLF 事件检测状态
+        self.outage_start_time = None  # 当前outage开始时间
+        self.outage_events = 0  # 累计outage事件数（连续outage >= T_out记一次）
+        self.outage_total_time = 0.0  # 累计outage总时长（秒）
+        
+        # 8) KPI统计（每个episode）
+        self.episode_kpis = {
+            "ho_count": 0,  # 切换次数
+            "outage_time_ratio": 0.0,  # Outage时间占比
+            "outage_events": 0,  # Outage事件数
+            "sinr_samples": [],  # SINR样本（用于计算分位数）
+            "interruption_total_time": 0.0,  # 中断总时长（全程）
+            "interruption_time_in_overlap_zone": 0.0,  # 仅统计位于切换重叠区内的断连时长（s）
+            "ping_pong_count": 0,  # 乒乓切换次数（1秒内来回切换）
+            "overlap_zone_time": 0.0,  # 处于切换重叠区内的累计时间（s）
+        }
+        self.last_ho_positions = []  # 记录最近切换位置（用于乒乓检测）
+        
+        # 9) 测量滤波增强（SINR差值滤波）
+        self.enable_delta_sinr_filter = self.cfg.get("enable_delta_sinr_filter", True)
+        self.delta_sinr_filter_alpha = self.cfg.get("delta_sinr_filter_alpha", 0.7)
+        self.last_delta_sinr_filtered = None  # 上一次滤波后的SINR差值
+        
+        # 10) 历史SINR（用于状态特征增强）
+        self.sinr_history = []  # 最近n步的SINR历史
+        self.sinr_history_size = 5  # 保留最近5步（250ms）
     
     def _init_default_action_space(self, hys_set=None, ttt_set=None):
         """
@@ -207,6 +234,13 @@ class TrainHandoverEnv(gym.Env):
             "ho_interruption_sinr_db": -20.0,  # 中断期间的SINR值（dB），设置为很低的值以模拟通信中断
             "ho_interruption_rsrp_dbm": -120.0,  # 中断期间的RSRP值（dBm），设置为很低的值以模拟通信中断
 
+            # 切换重叠区 KPI（5G-R：单侧 = 1/2 过渡距离 + 测量区 + 执行区；本仿真用可配置米数 + v×时延近似测量/执行）
+            "ho_overlap_kpi_enabled": True,
+            "ho_overlap_midpoint_m": None,  # None 表示轨道中点 track_length_m/2（两小区边界）
+            "ho_overlap_transition_half_m": 25.0,  # 单侧计入的 1/2 切换过渡距离（m）
+            "ho_overlap_meas_exec_delay_s": 0.2,  # 测量+执行等效时延（s），单侧附加距离 = v * delay
+            "ho_overlap_meas_exec_extra_m": 0.0,  # 除 v×delay 外再叠加的固定距离（m）
+
             # 快衰落控制（38.901 多径的小尺度衰落，简化为 Rayleigh / Rician）
             "enable_fast_fading": False,
             # 若不为 None，则采用 Rician，K 因子单位 dB；否则为 Rayleigh
@@ -228,45 +262,70 @@ class TrainHandoverEnv(gym.Env):
         
         Args:
             seed: 随机种子
-            options: 可选参数
+            options: 可选参数，可以包含：
+                - scenario_data: 预生成的场景数据（如果提供，将使用此场景数据）
             
         Returns:
             (观测, 信息字典)
         """
         super().reset(seed=seed)
         
-        # 关键：只设置一次seed，然后按固定顺序使用随机数
-        # 这样可以确保相同的seed总是生成相同的场景
-        # 随机数使用顺序（固定）：
-        #   1. 速度采样（如果random_speed=True，消耗1个；否则跳过但保持位置）
-        #   2-4. 天气采样（温度、湿度、PM2.5，消耗3个）
-        #   5-6. 阴影衰落初始值（阴影A、阴影B，消耗2个）
-        if seed is not None:
-            np.random.seed(seed)
+        # 检查是否使用预生成的场景数据
+        scenario_data = None
+        if options is not None and "scenario_data" in options:
+            scenario_data = options["scenario_data"]
         
-        # 1) 位置和速度
-        self.position_m = 0.0
-        if self.cfg["random_speed"]:
-            # 消耗第1个随机数
-            v_kmh = np.random.uniform(self.cfg["v_min_kmh"], self.cfg["v_max_kmh"])
+        if scenario_data is not None:
+            # 使用预生成的场景数据
+            # 1) 位置和速度（从场景数据中获取）
+            self.position_m = 0.0
+            self.velocity_mps = scenario_data["velocity_mps"]
+            
+            self.time_step = 0
+            self.serving_cell = 0  # 默认在 A 小区
+            
+            # 2) 设置天气参数（从场景数据中获取）
+            weather = scenario_data["weather"]
+            self.weather_model.temperature = weather["temperature"]
+            self.weather_model.humidity = weather["humidity"]
+            self.weather_model.pm25 = weather["pm25"]
+            
+            # 2.5) 重置信道模型的阴影衰落状态（传入场景数据）
+            self.channel_model.reset(seed=None, scenario_data=scenario_data)
         else:
-            # 即使不使用随机速度，也消耗一个随机数，确保后续随机数位置一致
-            # 这样无论random_speed设置如何，天气和阴影衰落都使用相同的随机数位置
-            _ = np.random.uniform(0.0, 1.0)  # 消耗第1个随机数（丢弃）
-            v_kmh = self.cfg["v_default_kmh"]
-        self.velocity_mps = v_kmh / 3.6
-        
-        self.time_step = 0
-        self.serving_cell = 0  # 默认在 A 小区
-        
-        # 2) 采样天气（消耗第2-4个随机数：温度、湿度、PM2.5）
-        # 注意：不重新设置seed，使用当前随机数生成器的状态
-        self.weather_model.sample_weather(seed=None)
-        
-        # 2.5) 重置信道模型的阴影衰落状态
-        # 阴影衰落初始值采样（消耗第5-6个随机数：阴影A、阴影B）
-        # 注意：不重新设置seed，使用当前随机数生成器的状态
-        self.channel_model.reset(seed=None)
+            # 使用原来的方法：随机生成场景
+            # 关键：只设置一次seed，然后按固定顺序使用随机数
+            # 这样可以确保相同的seed总是生成相同的场景
+            # 随机数使用顺序（固定）：
+            #   1. 速度采样（如果random_speed=True，消耗1个；否则跳过但保持位置）
+            #   2-4. 天气采样（温度、湿度、PM2.5，消耗3个）
+            #   5-6. 阴影衰落初始值（阴影A、阴影B，消耗2个）
+            if seed is not None:
+                np.random.seed(seed)
+            
+            # 1) 位置和速度
+            self.position_m = 0.0
+            if self.cfg["random_speed"]:
+                # 消耗第1个随机数
+                v_kmh = np.random.uniform(self.cfg["v_min_kmh"], self.cfg["v_max_kmh"])
+            else:
+                # 即使不使用随机速度，也消耗一个随机数，确保后续随机数位置一致
+                # 这样无论random_speed设置如何，天气和阴影衰落都使用相同的随机数位置
+                _ = np.random.uniform(0.0, 1.0)  # 消耗第1个随机数（丢弃）
+                v_kmh = self.cfg["v_default_kmh"]
+            self.velocity_mps = v_kmh / 3.6
+            
+            self.time_step = 0
+            self.serving_cell = 0  # 默认在 A 小区
+            
+            # 2) 采样天气（消耗第2-4个随机数：温度、湿度、PM2.5）
+            # 注意：不重新设置seed，使用当前随机数生成器的状态
+            self.weather_model.sample_weather(seed=None)
+            
+            # 2.5) 重置信道模型的阴影衰落状态
+            # 阴影衰落初始值采样（消耗第5-6个随机数：阴影A、阴影B）
+            # 注意：不重新设置seed，使用当前随机数生成器的状态
+            self.channel_model.reset(seed=None)
         
         # 3) 初始化上一时刻测量（用于 IIR 滤波）
         rsrp_A, rsrp_B, sinr_A, sinr_B = self.channel_model.compute_link_metrics(self.position_m)
@@ -280,6 +339,28 @@ class TrainHandoverEnv(gym.Env):
         
         # 5) 重置切换中断状态
         self.ho_interruption_remaining = 0
+        
+        # 6) 重置Outage/RLF事件检测状态
+        self.outage_start_time = None
+        self.outage_events = 0
+        self.outage_total_time = 0.0
+        
+        # 7) 重置KPI统计
+        self.episode_kpis = {
+            "ho_count": 0,
+            "outage_time_ratio": 0.0,
+            "outage_events": 0,
+            "sinr_samples": [],
+            "interruption_total_time": 0.0,
+            "interruption_time_in_overlap_zone": 0.0,
+            "ping_pong_count": 0,
+            "overlap_zone_time": 0.0,
+        }
+        self.last_ho_positions = []
+        
+        # 8) 重置测量滤波状态
+        self.last_delta_sinr_filtered = None
+        self.sinr_history = []
         
         obs = self._build_observation()
         info = {}
@@ -314,6 +395,12 @@ class TrainHandoverEnv(gym.Env):
             # 新模式：根据 Hys/TTT 参数判断是否切换
             # 2.1) 将动作转换为 Hys/TTT 参数
             hys, ttt = self._action_to_hys_ttt(action)
+            
+            # TTT量化：确保TTT是50ms的倍数
+            if self.cfg.get("ttt_quantize_to_50ms", True):
+                dt_ms = self.cfg["delta_t_s"] * 1000.0  # 50ms
+                ttt = round(ttt / dt_ms) * dt_ms  # 量化到50ms网格
+            
             self.ho_logic.update_hys_ttt(hys, ttt)
             
             # 2.2) 先计算一次链路以获取当前 RSRP（用于判断切换）
@@ -329,9 +416,9 @@ class TrainHandoverEnv(gym.Env):
             # 2.3) 计算 ΔRSRP
             delta_rsrp = rsrp_neig_temp - rsrp_serv_temp
             
-            # 2.4) 根据 A3 事件和 TTT 判断是否切换
+            # 2.4) 根据 A3 事件和 TTT 判断是否切换（传入位置用于距离模式）
             new_cell, ho_executed = self.ho_logic.execute_handover_with_a3(
-                current_time, self.serving_cell, delta_rsrp, dt
+                current_time, self.serving_cell, delta_rsrp, dt, self.position_m
             )
             
             if ho_executed:
@@ -350,7 +437,7 @@ class TrainHandoverEnv(gym.Env):
         else:
             # 兼容模式：直接根据动作判断
             if action == 1:
-                new_cell, ho_executed = self.ho_logic.execute_handover(current_time, self.serving_cell)
+                new_cell, ho_executed = self.ho_logic.execute_handover(current_time, self.serving_cell, self.position_m)
                 if ho_executed:
                     self.serving_cell = new_cell
                     # 切换发生，设置中断时隙数（中断在切换发生的时隙立即开始）
@@ -404,14 +491,37 @@ class TrainHandoverEnv(gym.Env):
             self.last_rsrp_neig = rsrp_neig
             self.last_sinr_serv = sinr_serv
         
-        # 5) outage & 终止判定
-        # 检查outage（这里仅用于统计和奖励，不再用于终止，确保轨迹完整到终点）
-        outage = self.ho_logic.check_outage(sinr_serv)
+        # 5) Outage检测（包括切换中断期间）
+        # 切换中断期间也计入outage
+        outage_sinr = self.ho_logic.check_outage(sinr_serv)
+        outage = outage_sinr or in_interruption
+        
+        # 5.1) Outage事件检测（连续outage >= T_out记一次事件）
+        T_out_s = self.cfg.get("T_out_s", 0.2)  # 默认200ms
+        if outage:
+            if self.outage_start_time is None:
+                self.outage_start_time = current_time
+            # 累计outage时长
+            self.outage_total_time += dt
+        else:
+            # 检查是否形成outage事件
+            if self.outage_start_time is not None:
+                outage_duration = current_time - self.outage_start_time
+                if outage_duration >= T_out_s:
+                    self.outage_events += 1
+                self.outage_start_time = None
+        
+        # 5.2) 终止判定
         arrived = self.position_m >= self.cfg["track_length_m"]
         terminated = bool(arrived)  # 仅到达终点时终止，不因 outage 终止
         truncated = False  # 可以加最大步数等逻辑
         
-        # 6) 奖励
+        # 5.3) KPI统计更新
+        self._update_kpis(
+            sinr_serv, ho_executed, in_interruption, dt, current_time, self.position_m
+        )
+        
+        # 6) 奖励计算（支持R0/R1/R2消融）
         reward = self._compute_reward(
             sinr_serv=sinr_serv,
             outage=outage,
@@ -424,6 +534,32 @@ class TrainHandoverEnv(gym.Env):
         
         # 计算 ΔRSRP（用于辅助预测和调试）
         delta_rsrp_dbm = rsrp_neig - rsrp_serv
+        
+        # 计算SINR差值（用于滤波）
+        sinr_neig = sinr_B if self.serving_cell == 0 else sinr_A
+        delta_sinr = sinr_neig - sinr_serv
+        
+        # SINR差值滤波（如果启用）
+        if self.enable_delta_sinr_filter:
+            if self.last_delta_sinr_filtered is None:
+                self.last_delta_sinr_filtered = delta_sinr
+            else:
+                alpha = self.delta_sinr_filter_alpha
+                self.last_delta_sinr_filtered = alpha * self.last_delta_sinr_filtered + (1 - alpha) * delta_sinr
+            delta_sinr_filtered = self.last_delta_sinr_filtered
+        else:
+            delta_sinr_filtered = delta_sinr
+        
+        # 更新SINR历史（用于状态特征）
+        self.sinr_history.append(sinr_serv)
+        if len(self.sinr_history) > self.sinr_history_size:
+            self.sinr_history.pop(0)
+        
+        # 计算最终KPI（如果episode结束）
+        kpis = None
+        if terminated:
+            total_time = current_time
+            kpis = self._compute_final_kpis(total_time)
         
         info = {
             "outage": outage,
@@ -444,7 +580,19 @@ class TrainHandoverEnv(gym.Env):
             "ho_interruption_remaining": self.ho_interruption_remaining,
             # 区分真正的outage和中断期间的outage（中断期间的outage不会终止episode）
             "outage_during_interruption": bool(outage and in_interruption),
+            # 增强特征：滤波后的SINR差值
+            "delta_sinr_filtered_db": delta_sinr_filtered,
+            # 增强特征：历史SINR统计
+            "sinr_mean_db": np.mean(self.sinr_history) if len(self.sinr_history) > 0 else sinr_serv,
+            "sinr_slope_db": (self.sinr_history[-1] - self.sinr_history[0]) / len(self.sinr_history) if len(self.sinr_history) > 1 else 0.0,
+            # TTS状态（是否处于保护窗口）
+            "in_tts_window": not self.ho_logic.can_handover(current_time, self.position_m),
+            "time_since_last_ho": current_time - self.ho_logic.last_ho_time,
         }
+        
+        # 如果episode结束，添加最终KPI
+        if kpis is not None:
+            info["kpis"] = kpis
         
         # 如果使用 Hys/TTT 模式，添加当前参数
         if self.use_hys_ttt:
@@ -496,7 +644,11 @@ class TrainHandoverEnv(gym.Env):
     
     def _compute_reward(self, sinr_serv: float, outage: bool, ho_executed: bool, in_interruption: bool = False) -> float:
         """
-        计算奖励
+        计算奖励（支持R0/R1/R2消融设计）
+        
+        R0: r_t = SINR_t (仅SINR)
+        R1: r_t = SINR_t - λ_ho * 1_{HO} (SINR + 切换惩罚)
+        R2: r_t = SINR_t - λ_out * 1_{SINR<γ_out} - λ_ho * 1_{HO} (SINR + Outage惩罚 + 切换惩罚)
         
         Args:
             sinr_serv: 服务小区SINR（dB）
@@ -511,20 +663,191 @@ class TrainHandoverEnv(gym.Env):
         sinr_min, sinr_max = self.cfg["sinr_min_db"], self.cfg["sinr_max_db"]
         sinr_norm = self._normalize(sinr_serv, sinr_min, sinr_max)
         
-        reward = sinr_norm
+        # 获取reward类型（R0/R1/R2）
+        reward_type = self.cfg.get("reward_type", "R2")
+        lambda_ho = self.cfg.get("lambda_ho", 2.0)
+        lambda_out = self.cfg.get("lambda_out", 15.0)
         
-        if outage:
-            reward -= self.cfg["C_outage"]  # 比如 10.0
-        
-        if ho_executed:
-            reward -= self.cfg["C_ho"]      # 比如 0.3
-        
-        # 切换中断期间的额外惩罚（中断本身已经导致SINR很低，这里可以额外惩罚）
-        if in_interruption:
-            C_interruption = self.cfg.get("C_interruption", 0.0)  # 中断惩罚系数（默认0，因为SINR已经很低）
-            reward -= C_interruption
+        if reward_type == "R0":
+            # R0: 仅SINR
+            reward = sinr_norm
+        elif reward_type == "R1":
+            # R1: SINR + 切换惩罚
+            reward = sinr_norm
+            if ho_executed:
+                reward -= lambda_ho
+        elif reward_type == "R2":
+            # R2: SINR + Outage惩罚 + 切换惩罚
+            reward = sinr_norm
+            if outage:
+                reward -= lambda_out
+            if ho_executed:
+                reward -= lambda_ho
+        else:
+            # 默认使用R2
+            reward = sinr_norm
+            if outage:
+                reward -= lambda_out
+            if ho_executed:
+                reward -= lambda_ho
         
         return float(reward)
+    
+    def _overlap_half_width_m(self) -> float:
+        """
+        切换重叠区在轨道中点单侧的半宽 W（米）。
+
+        与 5G-R 文献一致：单侧距离 ≈ (1/2)切换过渡距离 + 切换测量距离 + 切换执行距离；
+        其中测量/执行区用「固定米数 + 车速×等效时延」在本项目中近似，便于与 delta_t、车速配置对齐。
+        """
+        if not self.cfg.get("ho_overlap_kpi_enabled", True):
+            return 0.0
+        v = float(self.velocity_mps) if self.velocity_mps is not None else 0.0
+        t_half = float(self.cfg.get("ho_overlap_transition_half_m", 25.0))
+        delay = float(self.cfg.get("ho_overlap_meas_exec_delay_s", 0.2))
+        extra = float(self.cfg.get("ho_overlap_meas_exec_extra_m", 0.0))
+        return max(0.0, t_half + extra + max(v, 0.0) * delay)
+    
+    def _in_handover_overlap_zone(self, position_m: float) -> bool:
+        """列车位置是否落在以两小区几何中点为心的切换重叠区内。"""
+        if not self.cfg.get("ho_overlap_kpi_enabled", True):
+            return False
+        W = self._overlap_half_width_m()
+        if W <= 0.0:
+            return False
+        mid = self.cfg.get("ho_overlap_midpoint_m")
+        if mid is None:
+            mid = 0.5 * float(self.cfg["track_length_m"])
+        else:
+            mid = float(mid)
+        return abs(float(position_m) - mid) <= W
+    
+    def _update_kpis(
+        self,
+        sinr_serv: float,
+        ho_executed: bool,
+        in_interruption: bool,
+        dt: float,
+        current_time: float,
+        position_m: float,
+    ):
+        """
+        更新KPI统计
+        
+        Args:
+            sinr_serv: 服务小区SINR（dB）
+            ho_executed: 是否执行了切换
+            in_interruption: 是否处于切换中断期间
+            dt: 时间步长（秒）
+            current_time: 当前时间（秒）
+            position_m: 当前列车位置（米），用于切换重叠区统计
+        """
+        # 1. 切换次数
+        if ho_executed:
+            self.episode_kpis["ho_count"] += 1
+            self.last_ho_positions.append((current_time, self.position_m))
+            # 只保留最近1秒内的切换记录（用于乒乓检测）
+            self.last_ho_positions = [(t, p) for t, p in self.last_ho_positions if current_time - t <= 1.0]
+        
+        # 2. 乒乓检测（1秒内来回切换）
+        if ho_executed and len(self.last_ho_positions) >= 2:
+            # 检查最近两次切换是否在1秒内且方向相反
+            if len(self.last_ho_positions) >= 2:
+                t1, p1 = self.last_ho_positions[-2]
+                t2, p2 = self.last_ho_positions[-1]
+                if current_time - t1 <= 1.0:
+                    # 检查是否来回切换（位置变化方向相反）
+                    if (p2 - p1) * (self.position_m - p2) < 0:  # 方向相反
+                        self.episode_kpis["ping_pong_count"] += 1
+        
+        # 3. SINR样本收集（用于计算分位数）
+        self.episode_kpis["sinr_samples"].append(sinr_serv)
+        # 限制历史长度，避免内存过大
+        if len(self.episode_kpis["sinr_samples"]) > 10000:
+            self.episode_kpis["sinr_samples"] = self.episode_kpis["sinr_samples"][-10000:]
+        
+        # 4. 中断总时长
+        if in_interruption:
+            self.episode_kpis["interruption_total_time"] += dt
+        
+        in_oz = self._in_handover_overlap_zone(position_m)
+        # 4.1 切换重叠区内累计时长（通信中断率的分母）
+        if in_oz:
+            self.episode_kpis["overlap_zone_time"] += dt
+        # 4.2 重叠区内的断连时长（分子；避免列车在区外切换导致比值>1 的歧义）
+        if in_interruption and in_oz:
+            self.episode_kpis["interruption_time_in_overlap_zone"] += dt
+        
+        # 5. Outage时间占比（在step结束时计算，这里只更新outage_total_time）
+        # outage_total_time在outage检测部分已更新
+    
+    def _compute_final_kpis(self, total_time: float) -> dict:
+        """
+        计算最终KPI（episode结束时调用）
+        
+        Args:
+            total_time: 总时长（秒）
+            
+        Returns:
+            KPI字典
+        """
+        kpis = {}
+        
+        # 1. Outage时间占比
+        kpis["outage_time_ratio"] = self.outage_total_time / total_time if total_time > 0 else 0.0
+        
+        # 2. Outage事件数
+        kpis["outage_events"] = self.outage_events
+        # 如果episode结束时还在outage，检查是否形成事件
+        if self.outage_start_time is not None:
+            T_out_s = self.cfg.get("T_out_s", 0.2)
+            if total_time - self.outage_start_time >= T_out_s:
+                kpis["outage_events"] += 1
+        
+        # 3. 切换次数
+        kpis["ho_count"] = self.episode_kpis["ho_count"]
+        
+        # 4. 切换次数/公里
+        track_length_km = self.cfg["track_length_m"] / 1000.0
+        kpis["ho_per_km"] = kpis["ho_count"] / track_length_km if track_length_km > 0 else 0.0
+        
+        # 5. 乒乓率
+        kpis["ping_pong_count"] = self.episode_kpis["ping_pong_count"]
+        kpis["ping_pong_ratio"] = kpis["ping_pong_count"] / kpis["ho_count"] if kpis["ho_count"] > 0 else 0.0
+        
+        # 6. 中断总时长
+        kpis["interruption_total_time"] = self.episode_kpis["interruption_total_time"]
+        
+        # 6.1 切换重叠区与区内通信中断率（断连时间 / 列车处于重叠区的时间）
+        ozt = float(self.episode_kpis.get("overlap_zone_time", 0.0))
+        kpis["overlap_zone_time_s"] = ozt
+        W = self._overlap_half_width_m()
+        kpis["overlap_zone_half_width_m"] = float(W)
+        kpis["overlap_zone_full_width_m"] = float(2.0 * W)
+        int_in_oz = float(self.episode_kpis.get("interruption_time_in_overlap_zone", 0.0))
+        kpis["interruption_time_in_overlap_zone_s"] = int_in_oz
+        if ozt > 0.0:
+            kpis["comm_interruption_ratio_in_overlap_zone"] = int_in_oz / ozt
+        else:
+            kpis["comm_interruption_ratio_in_overlap_zone"] = 0.0
+        
+        # 7. SINR统计
+        sinr_samples = np.array(self.episode_kpis["sinr_samples"])
+        if len(sinr_samples) > 0:
+            kpis["sinr_mean_db"] = float(np.mean(sinr_samples))
+            kpis["sinr_std_db"] = float(np.std(sinr_samples))
+            kpis["sinr_p5_db"] = float(np.percentile(sinr_samples, 5))  # 5%分位
+            kpis["sinr_p95_db"] = float(np.percentile(sinr_samples, 95))  # 95%分位
+            # SINR低于某门限的时间占比
+            kpis["sinr_below_minus3db_ratio"] = float(np.mean(sinr_samples < -3.0))
+        else:
+            kpis["sinr_mean_db"] = 0.0
+            kpis["sinr_std_db"] = 0.0
+            kpis["sinr_p5_db"] = 0.0
+            kpis["sinr_p95_db"] = 0.0
+            kpis["sinr_below_minus3db_ratio"] = 0.0
+        
+        return kpis
     
     def render(self, mode='human'):
         """渲染环境（可选实现）"""
