@@ -119,10 +119,11 @@ class TrainHandoverEnv(gym.Env):
             "sinr_samples": [],  # SINR样本（用于计算分位数）
             "interruption_total_time": 0.0,  # 中断总时长（全程）
             "interruption_time_in_overlap_zone": 0.0,  # 仅统计位于切换重叠区内的断连时长（s）
-            "ping_pong_count": 0,  # 乒乓切换次数（1秒内来回切换）
+            "ping_pong_count": 0,  # 乒乓切换次数（重叠区内 A->B->A 或 B->A->B 记1次）
             "overlap_zone_time": 0.0,  # 处于切换重叠区内的累计时间（s）
+            "overlap_zone_sinr_time_weighted_sum": 0.0,  # 重叠区内SINR按时间积分（dB*s）
         }
-        self.last_ho_positions = []  # 记录最近切换位置（用于乒乓检测）
+        self.last_overlap_ho_transition = None  # 最近一次“重叠区内切换”方向 (from_cell, to_cell)
         
         # 9) 测量滤波增强（SINR差值滤波）
         self.enable_delta_sinr_filter = self.cfg.get("enable_delta_sinr_filter", True)
@@ -222,12 +223,27 @@ class TrainHandoverEnv(gym.Env):
             "rsrp_max_dbm": -60.0,
             "sinr_min_db": -10.0,
             "sinr_max_db": 20.0,
+            "reward_type": "R3",  # R0/R1/R2(兼容旧版)/R3(分级Outage+中断主惩罚)
+            "lambda_ho": 2.0,  # 旧版HO惩罚（R1/R2）
+            "lambda_out": 15.0,  # 旧版outage惩罚（R2）/R3最高等级惩罚
+            # R3: 分级SINR/outage惩罚
+            "sinr_warn_db": -3.0,  # 轻度劣化阈值
+            "sinr_degrade_db": -5.0,  # 中度劣化阈值
+            "lambda_sinr_warn": 1.5,  # 轻度惩罚
+            "lambda_sinr_degrade": 4.0,  # 中度惩罚
+            # R3: 用中断时长替代HO次数作为主惩罚
+            "lambda_interruption": 6.0,  # 处于中断时隙时每步惩罚
+            "lambda_ho_minor": 0.2,  # 可选小HO惩罚（避免完全忽略HO代价）
+            # 奖励尺度系数（可由训练阶段策略动态调整）
+            "reward_outage_scale": 1.0,
+            "reward_interruption_scale": 1.0,
+            "reward_ho_scale": 1.0,
             
             "C_outage": 10.0,
             "C_ho": 0.3,
             "C_interruption": 0.0,  # 切换中断惩罚系数（默认0，因为中断期间SINR已经很低）
             
-            "T_guard_s": 1.0,
+            "T_guard_s": 0.0,
             
             # 切换中断配置
             "ho_interruption_slots": 1,  # 切换导致的通信中断时隙数（默认1个时隙，即50ms）
@@ -355,8 +371,9 @@ class TrainHandoverEnv(gym.Env):
             "interruption_time_in_overlap_zone": 0.0,
             "ping_pong_count": 0,
             "overlap_zone_time": 0.0,
+            "overlap_zone_sinr_time_weighted_sum": 0.0,
         }
-        self.last_ho_positions = []
+        self.last_overlap_ho_transition = None
         
         # 8) 重置测量滤波状态
         self.last_delta_sinr_filtered = None
@@ -518,7 +535,14 @@ class TrainHandoverEnv(gym.Env):
         
         # 5.3) KPI统计更新
         self._update_kpis(
-            sinr_serv, ho_executed, in_interruption, dt, current_time, self.position_m
+            sinr_serv,
+            ho_executed,
+            in_interruption,
+            dt,
+            current_time,
+            self.position_m,
+            old_serving_cell,
+            self.serving_cell,
         )
         
         # 6) 奖励计算（支持R0/R1/R2消融）
@@ -642,13 +666,32 @@ class TrainHandoverEnv(gym.Env):
         
         return obs
     
+    def _compute_tiered_outage_penalty(self, sinr_serv: float, outage: bool) -> float:
+        """
+        计算分级outage/劣化惩罚（R3用）。
+
+        规则（从重到轻）：
+        1) outage=True: 使用最高惩罚 lambda_out
+        2) sinr < sinr_degrade_db: 使用中度惩罚 lambda_sinr_degrade
+        3) sinr < sinr_warn_db: 使用轻度惩罚 lambda_sinr_warn
+        """
+        if outage:
+            return float(self.cfg.get("lambda_out", 15.0))
+        if sinr_serv < float(self.cfg.get("sinr_degrade_db", -5.0)):
+            return float(self.cfg.get("lambda_sinr_degrade", 4.0))
+        if sinr_serv < float(self.cfg.get("sinr_warn_db", -3.0)):
+            return float(self.cfg.get("lambda_sinr_warn", 1.5))
+        return 0.0
+
     def _compute_reward(self, sinr_serv: float, outage: bool, ho_executed: bool, in_interruption: bool = False) -> float:
         """
-        计算奖励（支持R0/R1/R2消融设计）
+        计算奖励（支持R0/R1/R2/R3）
         
         R0: r_t = SINR_t (仅SINR)
         R1: r_t = SINR_t - λ_ho * 1_{HO} (SINR + 切换惩罚)
         R2: r_t = SINR_t - λ_out * 1_{SINR<γ_out} - λ_ho * 1_{HO} (SINR + Outage惩罚 + 切换惩罚)
+        R3: r_t = SINR_t - 分级SINR/Outage惩罚 - λ_int*1_{interruption} - λ_ho_minor*1_{HO}
+            （以中断时长惩罚为主，HO次数惩罚为辅）
         
         Args:
             sinr_serv: 服务小区SINR（dB）
@@ -664,7 +707,7 @@ class TrainHandoverEnv(gym.Env):
         sinr_norm = self._normalize(sinr_serv, sinr_min, sinr_max)
         
         # 获取reward类型（R0/R1/R2）
-        reward_type = self.cfg.get("reward_type", "R2")
+        reward_type = self.cfg.get("reward_type", "R3")
         lambda_ho = self.cfg.get("lambda_ho", 2.0)
         lambda_out = self.cfg.get("lambda_out", 15.0)
         
@@ -683,13 +726,33 @@ class TrainHandoverEnv(gym.Env):
                 reward -= lambda_out
             if ho_executed:
                 reward -= lambda_ho
-        else:
-            # 默认使用R2
+        elif reward_type == "R3":
+            # R3: 分级Outage惩罚 + 中断主惩罚 + 轻量HO惩罚
             reward = sinr_norm
-            if outage:
-                reward -= lambda_out
+            out_scale = float(self.cfg.get("reward_outage_scale", 1.0))
+            int_scale = float(self.cfg.get("reward_interruption_scale", 1.0))
+            ho_scale = float(self.cfg.get("reward_ho_scale", 1.0))
+            lambda_int = float(self.cfg.get("lambda_interruption", 6.0))
+            lambda_ho_minor = float(self.cfg.get("lambda_ho_minor", 0.2))
+
+            reward -= out_scale * self._compute_tiered_outage_penalty(sinr_serv, outage)
+            if in_interruption:
+                reward -= int_scale * lambda_int
             if ho_executed:
-                reward -= lambda_ho
+                reward -= ho_scale * lambda_ho_minor
+        else:
+            # 默认使用R3
+            reward = sinr_norm
+            out_scale = float(self.cfg.get("reward_outage_scale", 1.0))
+            int_scale = float(self.cfg.get("reward_interruption_scale", 1.0))
+            ho_scale = float(self.cfg.get("reward_ho_scale", 1.0))
+            lambda_int = float(self.cfg.get("lambda_interruption", 6.0))
+            lambda_ho_minor = float(self.cfg.get("lambda_ho_minor", 0.2))
+            reward -= out_scale * self._compute_tiered_outage_penalty(sinr_serv, outage)
+            if in_interruption:
+                reward -= int_scale * lambda_int
+            if ho_executed:
+                reward -= ho_scale * lambda_ho_minor
         
         return float(reward)
     
@@ -730,6 +793,8 @@ class TrainHandoverEnv(gym.Env):
         dt: float,
         current_time: float,
         position_m: float,
+        old_serving_cell: int,
+        new_serving_cell: int,
     ):
         """
         更新KPI统计
@@ -741,24 +806,31 @@ class TrainHandoverEnv(gym.Env):
             dt: 时间步长（秒）
             current_time: 当前时间（秒）
             position_m: 当前列车位置（米），用于切换重叠区统计
+            old_serving_cell: 切换前服务小区
+            new_serving_cell: 当前服务小区（若发生切换则为切换后）
         """
+        in_oz = self._in_handover_overlap_zone(position_m)
+
         # 1. 切换次数
         if ho_executed:
             self.episode_kpis["ho_count"] += 1
-            self.last_ho_positions.append((current_time, self.position_m))
-            # 只保留最近1秒内的切换记录（用于乒乓检测）
-            self.last_ho_positions = [(t, p) for t, p in self.last_ho_positions if current_time - t <= 1.0]
-        
-        # 2. 乒乓检测（1秒内来回切换）
-        if ho_executed and len(self.last_ho_positions) >= 2:
-            # 检查最近两次切换是否在1秒内且方向相反
-            if len(self.last_ho_positions) >= 2:
-                t1, p1 = self.last_ho_positions[-2]
-                t2, p2 = self.last_ho_positions[-1]
-                if current_time - t1 <= 1.0:
-                    # 检查是否来回切换（位置变化方向相反）
-                    if (p2 - p1) * (self.position_m - p2) < 0:  # 方向相反
+            # 2. 乒乓检测：仅考虑“重叠区内”切换，且相邻两次切换方向相反（A->B->A / B->A->B）
+            if in_oz and old_serving_cell != new_serving_cell:
+                current_transition = (int(old_serving_cell), int(new_serving_cell))
+                prev_transition = self.last_overlap_ho_transition
+                if prev_transition is not None:
+                    # 上一次 from->to 与本次完全反向，即构成一次乒乓
+                    if prev_transition[0] == current_transition[1] and prev_transition[1] == current_transition[0]:
                         self.episode_kpis["ping_pong_count"] += 1
+                        # 清空可避免连续序列被重复配对计数
+                        self.last_overlap_ho_transition = None
+                    else:
+                        self.last_overlap_ho_transition = current_transition
+                else:
+                    self.last_overlap_ho_transition = current_transition
+            elif not in_oz:
+                # 离开重叠区后，按你的定义不跨区间拼接乒乓
+                self.last_overlap_ho_transition = None
         
         # 3. SINR样本收集（用于计算分位数）
         self.episode_kpis["sinr_samples"].append(sinr_serv)
@@ -770,10 +842,10 @@ class TrainHandoverEnv(gym.Env):
         if in_interruption:
             self.episode_kpis["interruption_total_time"] += dt
         
-        in_oz = self._in_handover_overlap_zone(position_m)
         # 4.1 切换重叠区内累计时长（通信中断率的分母）
         if in_oz:
             self.episode_kpis["overlap_zone_time"] += dt
+            self.episode_kpis["overlap_zone_sinr_time_weighted_sum"] += sinr_serv * dt
         # 4.2 重叠区内的断连时长（分子；避免列车在区外切换导致比值>1 的歧义）
         if in_interruption and in_oz:
             self.episode_kpis["interruption_time_in_overlap_zone"] += dt
@@ -826,6 +898,11 @@ class TrainHandoverEnv(gym.Env):
         kpis["overlap_zone_full_width_m"] = float(2.0 * W)
         int_in_oz = float(self.episode_kpis.get("interruption_time_in_overlap_zone", 0.0))
         kpis["interruption_time_in_overlap_zone_s"] = int_in_oz
+        oz_sinr_time_sum = float(self.episode_kpis.get("overlap_zone_sinr_time_weighted_sum", 0.0))
+        if ozt > 0.0:
+            kpis["overlap_zone_sinr_mean_db"] = oz_sinr_time_sum / ozt
+        else:
+            kpis["overlap_zone_sinr_mean_db"] = 0.0
         if ozt > 0.0:
             kpis["comm_interruption_ratio_in_overlap_zone"] = int_in_oz / ozt
         else:

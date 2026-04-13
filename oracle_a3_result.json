@@ -1,0 +1,324 @@
+{
+  "selection_rule": [
+    "per-scenario maximize score",
+    "score = overlap_zone_sinr_mean_db - ho_penalty_weight * ho_count - 10 * outage_time_ratio",
+    "tie-break: lower ho_count, then lower outage_time_ratio"
+  ],
+  "num_scenarios": 100,
+  "oracle_use_full_grid": true,
+  "oracle_ho_penalty_weight": 0.5,
+  "oracle_summary_kpis": {
+    "ho_count_mean": 1.66,
+    "ho_count_std": 1.201831935005889,
+    "ho_count_min": 1,
+    "ho_count_max": 7,
+    "ho_per_km_mean": 0.5533333333333335,
+    "ho_per_km_std": 0.40061064500196314,
+    "ho_per_km_min": 0.3333333333333333,
+    "ho_per_km_max": 2.3333333333333335,
+    "sinr_mean_db_mean": 16.6290883429707,
+    "sinr_mean_db_std": 1.2189121724050873,
+    "sinr_mean_db_min": 13.968548919730027,
+    "sinr_mean_db_max": 19.628080309136617,
+    "sinr_std_db_mean": 14.693300304648503,
+    "sinr_std_db_std": 0.95669164141137,
+    "sinr_std_db_min": 12.7861564592652,
+    "sinr_std_db_max": 17.358940249897856,
+    "sinr_p5_db_mean": -0.6423497086768327,
+    "sinr_p5_db_std": 1.7131312619282653,
+    "sinr_p5_db_min": -5.332471871232629,
+    "sinr_p5_db_max": 4.108288550518621,
+    "sinr_p95_db_mean": 43.966583716572515,
+    "sinr_p95_db_std": 3.4604388412891214,
+    "sinr_p95_db_min": 35.99829735581279,
+    "sinr_p95_db_max": 51.98038005694007,
+    "sinr_below_minus3db_ratio_mean": 0.022649322458580926,
+    "sinr_below_minus3db_ratio_std": 0.018426883784814076,
+    "sinr_below_minus3db_ratio_min": 0.0022675736961451248,
+    "sinr_below_minus3db_ratio_max": 0.09900990099009901,
+    "outage_time_ratio_mean": 0.006632828461175112,
+    "outage_time_ratio_std": 0.0064161134311439645,
+    "outage_time_ratio_min": 0.001447178002894356,
+    "outage_time_ratio_max": 0.04243281471004245,
+    "outage_events_mean": 0.27,
+    "outage_events_std": 0.6611353870426238,
+    "outage_events_min": 0,
+    "outage_events_max": 3,
+    "ping_pong_count_mean": 0.0,
+    "ping_pong_count_std": 0.0,
+    "ping_pong_count_min": 0,
+    "ping_pong_count_max": 0,
+    "ping_pong_ratio_mean": 0.0,
+    "ping_pong_ratio_std": 0.0,
+    "ping_pong_ratio_min": 0.0,
+    "ping_pong_ratio_max": 0.0,
+    "interruption_total_time_mean": 0.08300000000000005,
+    "interruption_total_time_std": 0.06009159675029446,
+    "interruption_total_time_min": 0.05,
+    "interruption_total_time_max": 0.35,
+    "interruption_time_in_overlap_zone_s_mean": 0.0055000000000000005,
+    "interruption_time_in_overlap_zone_s_std": 0.015644487847162016,
+    "interruption_time_in_overlap_zone_s_min": 0.0,
+    "interruption_time_in_overlap_zone_s_max": 0.05,
+    "overlap_zone_time_s_mean": 1.2095000000000005,
+    "overlap_zone_time_s_std": 0.22301289200402766,
+    "overlap_zone_time_s_min": 0.9000000000000002,
+    "overlap_zone_time_s_max": 1.850000000000001,
+    "overlap_zone_sinr_mean_db_mean": 3.071500317980994,
+    "overlap_zone_sinr_mean_db_std": 3.0212428741920725,
+    "overlap_zone_sinr_mean_db_min": -2.506515663218429,
+    "overlap_zone_sinr_mean_db_max": 12.883093210505297,
+    "overlap_zone_half_width_m_mean": 38.157215378883585,
+    "overlap_zone_half_width_m_std": 3.2779446357415427,
+    "overlap_zone_half_width_m_min": 31.77067223150527,
+    "overlap_zone_half_width_m_max": 44.324187785504094,
+    "overlap_zone_full_width_m_mean": 76.31443075776717,
+    "overlap_zone_full_width_m_std": 6.555889271483085,
+    "overlap_zone_full_width_m_min": 63.54134446301054,
+    "overlap_zone_full_width_m_max": 88.64837557100819,
+    "comm_interruption_ratio_in_overlap_zone_mean": 0.004358654537104784,
+    "comm_interruption_ratio_in_overlap_zone_std": 0.01259420707666153,
+    "comm_interruption_ratio_in_overlap_zone_min": 0.0,
+    "comm_interruption_ratio_in_overlap_zone_max": 0.05263157894736841
+  },
+  "oracle_selection_distribution": [
+    {
+      "policy_name": "A3 (Hys=1.5dB, TTT=640ms)",
+      "hys_db": 1.5,
+      "ttt_ms": 640.0,
+      "count": 10,
+      "ratio": 0.1
+    },
+    {
+      "policy_name": "A3 (Hys=5.0dB, TTT=160ms)",
+      "hys_db": 5.0,
+      "ttt_ms": 160.0,
+      "count": 7,
+      "ratio": 0.07
+    },
+    {
+      "policy_name": "A3 (Hys=1.5dB, TTT=320ms)",
+      "hys_db": 1.5,
+      "ttt_ms": 320.0,
+      "count": 6,
+      "ratio": 0.06
+    },
+    {
+      "policy_name": "A3 (Hys=4.0dB, TTT=160ms)",
+      "hys_db": 4.0,
+      "ttt_ms": 160.0,
+      "count": 5,
+      "ratio": 0.05
+    },
+    {
+      "policy_name": "A3 (Hys=4.5dB, TTT=160ms)",
+      "hys_db": 4.5,
+      "ttt_ms": 160.0,
+      "count": 5,
+      "ratio": 0.05
+    },
+    {
+      "policy_name": "A3 (Hys=3.5dB, TTT=80ms)",
+      "hys_db": 3.5,
+      "ttt_ms": 80.0,
+      "count": 5,
+      "ratio": 0.05
+    },
+    {
+      "policy_name": "A3 (Hys=4.0dB, TTT=320ms)",
+      "hys_db": 4.0,
+      "ttt_ms": 320.0,
+      "count": 4,
+      "ratio": 0.04
+    },
+    {
+      "policy_name": "A3 (Hys=3.5dB, TTT=160ms)",
+      "hys_db": 3.5,
+      "ttt_ms": 160.0,
+      "count": 4,
+      "ratio": 0.04
+    },
+    {
+      "policy_name": "A3 (Hys=3.0dB, TTT=320ms)",
+      "hys_db": 3.0,
+      "ttt_ms": 320.0,
+      "count": 4,
+      "ratio": 0.04
+    },
+    {
+      "policy_name": "A3 (Hys=3.5dB, TTT=320ms)",
+      "hys_db": 3.5,
+      "ttt_ms": 320.0,
+      "count": 4,
+      "ratio": 0.04
+    },
+    {
+      "policy_name": "A3 (Hys=2.0dB, TTT=640ms)",
+      "hys_db": 2.0,
+      "ttt_ms": 640.0,
+      "count": 3,
+      "ratio": 0.03
+    },
+    {
+      "policy_name": "A3 (Hys=4.0dB, TTT=0ms)",
+      "hys_db": 4.0,
+      "ttt_ms": 0.0,
+      "count": 3,
+      "ratio": 0.03
+    },
+    {
+      "policy_name": "A3 (Hys=4.5dB, TTT=80ms)",
+      "hys_db": 4.5,
+      "ttt_ms": 80.0,
+      "count": 3,
+      "ratio": 0.03
+    },
+    {
+      "policy_name": "A3 (Hys=5.0dB, TTT=80ms)",
+      "hys_db": 5.0,
+      "ttt_ms": 80.0,
+      "count": 3,
+      "ratio": 0.03
+    },
+    {
+      "policy_name": "A3 (Hys=1.5dB, TTT=0ms)",
+      "hys_db": 1.5,
+      "ttt_ms": 0.0,
+      "count": 3,
+      "ratio": 0.03
+    },
+    {
+      "policy_name": "A3 (Hys=3.5dB, TTT=640ms)",
+      "hys_db": 3.5,
+      "ttt_ms": 640.0,
+      "count": 3,
+      "ratio": 0.03
+    },
+    {
+      "policy_name": "A3 (Hys=4.5dB, TTT=320ms)",
+      "hys_db": 4.5,
+      "ttt_ms": 320.0,
+      "count": 3,
+      "ratio": 0.03
+    },
+    {
+      "policy_name": "A3 (Hys=5.0dB, TTT=640ms)",
+      "hys_db": 5.0,
+      "ttt_ms": 640.0,
+      "count": 2,
+      "ratio": 0.02
+    },
+    {
+      "policy_name": "A3 (Hys=2.5dB, TTT=640ms)",
+      "hys_db": 2.5,
+      "ttt_ms": 640.0,
+      "count": 2,
+      "ratio": 0.02
+    },
+    {
+      "policy_name": "A3 (Hys=4.0dB, TTT=640ms)",
+      "hys_db": 4.0,
+      "ttt_ms": 640.0,
+      "count": 2,
+      "ratio": 0.02
+    },
+    {
+      "policy_name": "A3 (Hys=5.0dB, TTT=320ms)",
+      "hys_db": 5.0,
+      "ttt_ms": 320.0,
+      "count": 2,
+      "ratio": 0.02
+    },
+    {
+      "policy_name": "A3 (Hys=1.5dB, TTT=80ms)",
+      "hys_db": 1.5,
+      "ttt_ms": 80.0,
+      "count": 2,
+      "ratio": 0.02
+    },
+    {
+      "policy_name": "A3 (Hys=3.0dB, TTT=80ms)",
+      "hys_db": 3.0,
+      "ttt_ms": 80.0,
+      "count": 2,
+      "ratio": 0.02
+    },
+    {
+      "policy_name": "A3 (Hys=2.5dB, TTT=320ms)",
+      "hys_db": 2.5,
+      "ttt_ms": 320.0,
+      "count": 2,
+      "ratio": 0.02
+    },
+    {
+      "policy_name": "A3 (Hys=3.0dB, TTT=640ms)",
+      "hys_db": 3.0,
+      "ttt_ms": 640.0,
+      "count": 2,
+      "ratio": 0.02
+    },
+    {
+      "policy_name": "A3 (Hys=5.0dB, TTT=0ms)",
+      "hys_db": 5.0,
+      "ttt_ms": 0.0,
+      "count": 1,
+      "ratio": 0.01
+    },
+    {
+      "policy_name": "A3 (Hys=2.5dB, TTT=80ms)",
+      "hys_db": 2.5,
+      "ttt_ms": 80.0,
+      "count": 1,
+      "ratio": 0.01
+    },
+    {
+      "policy_name": "A3 (Hys=4.5dB, TTT=0ms)",
+      "hys_db": 4.5,
+      "ttt_ms": 0.0,
+      "count": 1,
+      "ratio": 0.01
+    },
+    {
+      "policy_name": "A3 (Hys=3.0dB, TTT=0ms)",
+      "hys_db": 3.0,
+      "ttt_ms": 0.0,
+      "count": 1,
+      "ratio": 0.01
+    },
+    {
+      "policy_name": "A3 (Hys=2.5dB, TTT=160ms)",
+      "hys_db": 2.5,
+      "ttt_ms": 160.0,
+      "count": 1,
+      "ratio": 0.01
+    },
+    {
+      "policy_name": "A3 (Hys=2.0dB, TTT=320ms)",
+      "hys_db": 2.0,
+      "ttt_ms": 320.0,
+      "count": 1,
+      "ratio": 0.01
+    },
+    {
+      "policy_name": "A3 (Hys=4.0dB, TTT=80ms)",
+      "hys_db": 4.0,
+      "ttt_ms": 80.0,
+      "count": 1,
+      "ratio": 0.01
+    },
+    {
+      "policy_name": "A3 (Hys=2.5dB, TTT=0ms)",
+      "hys_db": 2.5,
+      "ttt_ms": 0.0,
+      "count": 1,
+      "ratio": 0.01
+    },
+    {
+      "policy_name": "A3 (Hys=1.5dB, TTT=160ms)",
+      "hys_db": 1.5,
+      "ttt_ms": 160.0,
+      "count": 1,
+      "ratio": 0.01
+    }
+  ]
+}

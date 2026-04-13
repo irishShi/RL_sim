@@ -45,6 +45,53 @@ class DataCollector:
         self.obs_dim = config['observation']['obs_dim']
         self.n_steps = config['training']['n_steps']
         self.gamma = config['training']['gamma']
+        self._last_phase_idx = None
+
+    def _apply_reward_phase_for_episode(self, episode_idx: int, num_episodes: int):
+        """
+        按训练进度分阶段调整奖励权重（用于离线数据收集阶段）。
+
+        阶段配置来自 env.cfg['reward_training_phases']。
+        """
+        phase_cfg = self.env.cfg.get('reward_training_phases', {})
+        if not phase_cfg or not phase_cfg.get('enabled', False):
+            return
+        phases = phase_cfg.get('phases', [])
+        if not phases:
+            return
+
+        # 训练进度（0~1]
+        progress = float(episode_idx + 1) / max(int(num_episodes), 1)
+        selected_idx = None
+        selected = None
+        for i, ph in enumerate(phases):
+            end_ratio = float(ph.get('end_episode_ratio', 1.0))
+            if progress <= end_ratio:
+                selected_idx = i
+                selected = ph
+                break
+        if selected is None:
+            selected_idx = len(phases) - 1
+            selected = phases[-1]
+
+        # 仅在阶段切换时打印一次，避免刷屏
+        if self._last_phase_idx != selected_idx:
+            print(
+                f"\n[RewardPhase] 进入阶段 {selected_idx + 1}/{len(phases)} "
+                f"(progress={progress:.2%}) | "
+                f"outage_scale={selected.get('reward_outage_scale', self.env.cfg.get('reward_outage_scale', 1.0))}, "
+                f"interruption_scale={selected.get('reward_interruption_scale', self.env.cfg.get('reward_interruption_scale', 1.0))}, "
+                f"ho_scale={selected.get('reward_ho_scale', self.env.cfg.get('reward_ho_scale', 1.0))}"
+            )
+            self._last_phase_idx = selected_idx
+
+        # 覆盖环境中的奖励尺度
+        if 'reward_outage_scale' in selected:
+            self.env.cfg['reward_outage_scale'] = float(selected['reward_outage_scale'])
+        if 'reward_interruption_scale' in selected:
+            self.env.cfg['reward_interruption_scale'] = float(selected['reward_interruption_scale'])
+        if 'reward_ho_scale' in selected:
+            self.env.cfg['reward_ho_scale'] = float(selected['reward_ho_scale'])
         
     def collect_episode(self, policy_type: str = 'random', epsilon: float = 1.0, 
                        seed: Optional[int] = None) -> List[Dict]:
@@ -191,6 +238,7 @@ class DataCollector:
         print(f"Episode数量: {num_episodes}")
         
         for episode in tqdm(range(num_episodes), desc="收集数据"):
+            self._apply_reward_phase_for_episode(episode, num_episodes)
             seed = seed_start + episode if seed_start is not None else None
             experiences = self.collect_episode(policy_type, epsilon, seed)
             all_experiences.extend(experiences)

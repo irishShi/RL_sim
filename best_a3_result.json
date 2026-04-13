@@ -1,0 +1,70 @@
+{
+  "selection_rule": [
+    "minimize ho_count_mean",
+    "maximize overlap_zone_sinr_mean_db_mean",
+    "minimize outage_time_ratio_mean as tie-break"
+  ],
+  "num_scenarios": 100,
+  "best": {
+    "policy_name": "A3 (Hys=1.5dB, TTT=640ms)",
+    "hys_db": 1.5,
+    "ttt_ms": 640.0,
+    "ho_count_mean": 2.16,
+    "overlap_zone_sinr_mean_db_mean": 1.5892802077279002,
+    "outage_time_ratio_mean": 0.012130738448645366,
+    "sinr_mean_db_mean": 16.455748644128345,
+    "comm_interruption_ratio_in_overlap_zone_mean": 0.00931019633690173
+  },
+  "top10": [
+    {
+      "policy_name": "A3 (Hys=1.5dB, TTT=640ms)",
+      "hys_db": 1.5,
+      "ttt_ms": 640.0,
+      "ho_count_mean": 2.16,
+      "overlap_zone_sinr_mean_db_mean": 1.5892802077279002,
+      "outage_time_ratio_mean": 0.012130738448645366,
+      "sinr_mean_db_mean": 16.455748644128345,
+      "comm_interruption_ratio_in_overlap_zone_mean": 0.00931019633690173
+    },
+    {
+      "policy_name": "A3 (Hys=4.5dB, TTT=160ms)",
+      "hys_db": 4.5,
+      "ttt_ms": 160.0,
+      "ho_count_mean": 2.4,
+      "overlap_zone_sinr_mean_db_mean": 2.221165961381695,
+      "outage_time_ratio_mean": 0.006989305380954151,
+      "sinr_mean_db_mean": 16.619343763224197,
+      "comm_interruption_ratio_in_overlap_zone_mean": 0.012183042483889754
+    },
+    {
+      "policy_name": "A3 (Hys=2.5dB, TTT=320ms)",
+      "hys_db": 2.5,
+      "ttt_ms": 320.0,
+      "ho_count_mean": 2.82,
+      "overlap_zone_sinr_mean_db_mean": 2.199087289119726,
+      "outage_time_ratio_mean": 0.009038255589085843,
+      "sinr_mean_db_mean": 16.588361940055112,
+      "comm_interruption_ratio_in_overlap_zone_mean": 0.012925719689724856
+    },
+    {
+      "policy_name": "A3 (Hys=4.5dB, TTT=0ms)",
+      "hys_db": 4.5,
+      "ttt_ms": 0.0,
+      "ho_count_mean": 3.48,
+      "overlap_zone_sinr_mean_db_mean": 2.439824790446672,
+      "outage_time_ratio_mean": 0.010971203965268166,
+      "sinr_mean_db_mean": 16.664387464229645,
+      "comm_interruption_ratio_in_overlap_zone_mean": 0.01611284673760705
+    },
+    {
+      "policy_name": "A3 (Hys=1.5dB, TTT=160ms)",
+      "hys_db": 1.5,
+      "ttt_ms": 160.0,
+      "ho_count_mean": 5.36,
+      "overlap_zone_sinr_mean_db_mean": 2.1769172986146383,
+      "outage_time_ratio_mean": 0.01782359158697101,
+      "sinr_mean_db_mean": 16.585292508090223,
+      "comm_interruption_ratio_in_overlap_zone_mean": 0.023289825905146853
+    }
+  ]
+}

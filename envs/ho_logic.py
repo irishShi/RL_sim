@@ -47,7 +47,7 @@ class HandoverLogic:
         else:
             # 时间模式（默认）
             time_since_last_ho = current_time - self.last_ho_time
-            T_guard_s = self.cfg.get("T_guard_s", 1.0)
+            T_guard_s = self.cfg.get("T_guard_s", 0.0)
             return time_since_last_ho >= T_guard_s
     
     def update_hys_ttt(self, hys: float, ttt: float):

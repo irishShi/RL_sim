@@ -1,0 +1,437 @@
+{
+  "num_scenarios": 100,
+  "results": {
+    "A3 (Hys=1.5dB, TTT=0ms)": {
+      "hys_db": 1.5,
+      "ttt_ms": 0.0,
+      "ho_total": 898,
+      "ho_in_overlap": 100,
+      "ho_out_overlap": 798,
+      "ho_in_overlap_ratio": 0.111358574610245,
+      "ho_out_overlap_ratio": 0.888641425389755
+    },
+    "A3 (Hys=1.5dB, TTT=40ms)": {
+      "hys_db": 1.5,
+      "ttt_ms": 40.0,
+      "ho_total": 898,
+      "ho_in_overlap": 100,
+      "ho_out_overlap": 798,
+      "ho_in_overlap_ratio": 0.111358574610245,
+      "ho_out_overlap_ratio": 0.888641425389755
+    },
+    "A3 (Hys=1.5dB, TTT=80ms)": {
+      "hys_db": 1.5,
+      "ttt_ms": 80.0,
+      "ho_total": 634,
+      "ho_in_overlap": 70,
+      "ho_out_overlap": 564,
+      "ho_in_overlap_ratio": 0.11041009463722397,
+      "ho_out_overlap_ratio": 0.889589905362776
+    },
+    "A3 (Hys=1.5dB, TTT=160ms)": {
+      "hys_db": 1.5,
+      "ttt_ms": 160.0,
+      "ho_total": 506,
+      "ho_in_overlap": 55,
+      "ho_out_overlap": 451,
+      "ho_in_overlap_ratio": 0.10869565217391304,
+      "ho_out_overlap_ratio": 0.8913043478260869
+    },
+    "A3 (Hys=1.5dB, TTT=320ms)": {
+      "hys_db": 1.5,
+      "ttt_ms": 320.0,
+      "ho_total": 326,
+      "ho_in_overlap": 46,
+      "ho_out_overlap": 280,
+      "ho_in_overlap_ratio": 0.1411042944785276,
+      "ho_out_overlap_ratio": 0.8588957055214724
+    },
+    "A3 (Hys=1.5dB, TTT=640ms)": {
+      "hys_db": 1.5,
+      "ttt_ms": 640.0,
+      "ho_total": 174,
+      "ho_in_overlap": 23,
+      "ho_out_overlap": 151,
+      "ho_in_overlap_ratio": 0.13218390804597702,
+      "ho_out_overlap_ratio": 0.867816091954023
+    },
+    "A3 (Hys=2.0dB, TTT=0ms)": {
+      "hys_db": 2.0,
+      "ttt_ms": 0.0,
+      "ho_total": 736,
+      "ho_in_overlap": 79,
+      "ho_out_overlap": 657,
+      "ho_in_overlap_ratio": 0.10733695652173914,
+      "ho_out_overlap_ratio": 0.8926630434782609
+    },
+    "A3 (Hys=2.0dB, TTT=40ms)": {
+      "hys_db": 2.0,
+      "ttt_ms": 40.0,
+      "ho_total": 736,
+      "ho_in_overlap": 79,
+      "ho_out_overlap": 657,
+      "ho_in_overlap_ratio": 0.10733695652173914,
+      "ho_out_overlap_ratio": 0.8926630434782609
+    },
+    "A3 (Hys=2.0dB, TTT=80ms)": {
+      "hys_db": 2.0,
+      "ttt_ms": 80.0,
+      "ho_total": 542,
+      "ho_in_overlap": 63,
+      "ho_out_overlap": 479,
+      "ho_in_overlap_ratio": 0.11623616236162361,
+      "ho_out_overlap_ratio": 0.8837638376383764
+    },
+    "A3 (Hys=2.0dB, TTT=160ms)": {
+      "hys_db": 2.0,
+      "ttt_ms": 160.0,
+      "ho_total": 428,
+      "ho_in_overlap": 51,
+      "ho_out_overlap": 377,
+      "ho_in_overlap_ratio": 0.1191588785046729,
+      "ho_out_overlap_ratio": 0.8808411214953271
+    },
+    "A3 (Hys=2.0dB, TTT=320ms)": {
+      "hys_db": 2.0,
+      "ttt_ms": 320.0,
+      "ho_total": 288,
+      "ho_in_overlap": 41,
+      "ho_out_overlap": 247,
+      "ho_in_overlap_ratio": 0.1423611111111111,
+      "ho_out_overlap_ratio": 0.8576388888888888
+    },
+    "A3 (Hys=2.0dB, TTT=640ms)": {
+      "hys_db": 2.0,
+      "ttt_ms": 640.0,
+      "ho_total": 154,
+      "ho_in_overlap": 18,
+      "ho_out_overlap": 136,
+      "ho_in_overlap_ratio": 0.11688311688311688,
+      "ho_out_overlap_ratio": 0.8831168831168831
+    },
+    "A3 (Hys=2.5dB, TTT=0ms)": {
+      "hys_db": 2.5,
+      "ttt_ms": 0.0,
+      "ho_total": 634,
+      "ho_in_overlap": 70,
+      "ho_out_overlap": 564,
+      "ho_in_overlap_ratio": 0.11041009463722397,
+      "ho_out_overlap_ratio": 0.889589905362776
+    },
+    "A3 (Hys=2.5dB, TTT=40ms)": {
+      "hys_db": 2.5,
+      "ttt_ms": 40.0,
+      "ho_total": 634,
+      "ho_in_overlap": 70,
+      "ho_out_overlap": 564,
+      "ho_in_overlap_ratio": 0.11041009463722397,
+      "ho_out_overlap_ratio": 0.889589905362776
+    },
+    "A3 (Hys=2.5dB, TTT=80ms)": {
+      "hys_db": 2.5,
+      "ttt_ms": 80.0,
+      "ho_total": 472,
+      "ho_in_overlap": 56,
+      "ho_out_overlap": 416,
+      "ho_in_overlap_ratio": 0.11864406779661017,
+      "ho_out_overlap_ratio": 0.8813559322033898
+    },
+    "A3 (Hys=2.5dB, TTT=160ms)": {
+      "hys_db": 2.5,
+      "ttt_ms": 160.0,
+      "ho_total": 370,
+      "ho_in_overlap": 45,
+      "ho_out_overlap": 325,
+      "ho_in_overlap_ratio": 0.12162162162162163,
+      "ho_out_overlap_ratio": 0.8783783783783784
+    },
+    "A3 (Hys=2.5dB, TTT=320ms)": {
+      "hys_db": 2.5,
+      "ttt_ms": 320.0,
+      "ho_total": 246,
+      "ho_in_overlap": 32,
+      "ho_out_overlap": 214,
+      "ho_in_overlap_ratio": 0.13008130081300814,
+      "ho_out_overlap_ratio": 0.8699186991869918
+    },
+    "A3 (Hys=2.5dB, TTT=640ms)": {
+      "hys_db": 2.5,
+      "ttt_ms": 640.0,
+      "ho_total": 148,
+      "ho_in_overlap": 13,
+      "ho_out_overlap": 135,
+      "ho_in_overlap_ratio": 0.08783783783783784,
+      "ho_out_overlap_ratio": 0.9121621621621622
+    },
+    "A3 (Hys=3.0dB, TTT=0ms)": {
+      "hys_db": 3.0,
+      "ttt_ms": 0.0,
+      "ho_total": 536,
+      "ho_in_overlap": 60,
+      "ho_out_overlap": 476,
+      "ho_in_overlap_ratio": 0.11194029850746269,
+      "ho_out_overlap_ratio": 0.8880597014925373
+    },
+    "A3 (Hys=3.0dB, TTT=40ms)": {
+      "hys_db": 3.0,
+      "ttt_ms": 40.0,
+      "ho_total": 536,
+      "ho_in_overlap": 60,
+      "ho_out_overlap": 476,
+      "ho_in_overlap_ratio": 0.11194029850746269,
+      "ho_out_overlap_ratio": 0.8880597014925373
+    },
+    "A3 (Hys=3.0dB, TTT=80ms)": {
+      "hys_db": 3.0,
+      "ttt_ms": 80.0,
+      "ho_total": 398,
+      "ho_in_overlap": 50,
+      "ho_out_overlap": 348,
+      "ho_in_overlap_ratio": 0.12562814070351758,
+      "ho_out_overlap_ratio": 0.8743718592964824
+    },
+    "A3 (Hys=3.0dB, TTT=160ms)": {
+      "hys_db": 3.0,
+      "ttt_ms": 160.0,
+      "ho_total": 326,
+      "ho_in_overlap": 43,
+      "ho_out_overlap": 283,
+      "ho_in_overlap_ratio": 0.13190184049079753,
+      "ho_out_overlap_ratio": 0.8680981595092024
+    },
+    "A3 (Hys=3.0dB, TTT=320ms)": {
+      "hys_db": 3.0,
+      "ttt_ms": 320.0,
+      "ho_total": 226,
+      "ho_in_overlap": 28,
+      "ho_out_overlap": 198,
+      "ho_in_overlap_ratio": 0.12389380530973451,
+      "ho_out_overlap_ratio": 0.8761061946902655
+    },
+    "A3 (Hys=3.0dB, TTT=640ms)": {
+      "hys_db": 3.0,
+      "ttt_ms": 640.0,
+      "ho_total": 144,
+      "ho_in_overlap": 10,
+      "ho_out_overlap": 134,
+      "ho_in_overlap_ratio": 0.06944444444444445,
+      "ho_out_overlap_ratio": 0.9305555555555556
+    },
+    "A3 (Hys=3.5dB, TTT=0ms)": {
+      "hys_db": 3.5,
+      "ttt_ms": 0.0,
+      "ho_total": 464,
+      "ho_in_overlap": 57,
+      "ho_out_overlap": 407,
+      "ho_in_overlap_ratio": 0.12284482758620689,
+      "ho_out_overlap_ratio": 0.8771551724137931
+    },
+    "A3 (Hys=3.5dB, TTT=40ms)": {
+      "hys_db": 3.5,
+      "ttt_ms": 40.0,
+      "ho_total": 464,
+      "ho_in_overlap": 57,
+      "ho_out_overlap": 407,
+      "ho_in_overlap_ratio": 0.12284482758620689,
+      "ho_out_overlap_ratio": 0.8771551724137931
+    },
+    "A3 (Hys=3.5dB, TTT=80ms)": {
+      "hys_db": 3.5,
+      "ttt_ms": 80.0,
+      "ho_total": 346,
+      "ho_in_overlap": 43,
+      "ho_out_overlap": 303,
+      "ho_in_overlap_ratio": 0.12427745664739884,
+      "ho_out_overlap_ratio": 0.8757225433526011
+    },
+    "A3 (Hys=3.5dB, TTT=160ms)": {
+      "hys_db": 3.5,
+      "ttt_ms": 160.0,
+      "ho_total": 296,
+      "ho_in_overlap": 39,
+      "ho_out_overlap": 257,
+      "ho_in_overlap_ratio": 0.13175675675675674,
+      "ho_out_overlap_ratio": 0.8682432432432432
+    },
+    "A3 (Hys=3.5dB, TTT=320ms)": {
+      "hys_db": 3.5,
+      "ttt_ms": 320.0,
+      "ho_total": 200,
+      "ho_in_overlap": 23,
+      "ho_out_overlap": 177,
+      "ho_in_overlap_ratio": 0.115,
+      "ho_out_overlap_ratio": 0.885
+    },
+    "A3 (Hys=3.5dB, TTT=640ms)": {
+      "hys_db": 3.5,
+      "ttt_ms": 640.0,
+      "ho_total": 134,
+      "ho_in_overlap": 9,
+      "ho_out_overlap": 125,
+      "ho_in_overlap_ratio": 0.06716417910447761,
+      "ho_out_overlap_ratio": 0.9328358208955224
+    },
+    "A3 (Hys=4.0dB, TTT=0ms)": {
+      "hys_db": 4.0,
+      "ttt_ms": 0.0,
+      "ho_total": 400,
+      "ho_in_overlap": 48,
+      "ho_out_overlap": 352,
+      "ho_in_overlap_ratio": 0.12,
+      "ho_out_overlap_ratio": 0.88
+    },
+    "A3 (Hys=4.0dB, TTT=40ms)": {
+      "hys_db": 4.0,
+      "ttt_ms": 40.0,
+      "ho_total": 400,
+      "ho_in_overlap": 48,
+      "ho_out_overlap": 352,
+      "ho_in_overlap_ratio": 0.12,
+      "ho_out_overlap_ratio": 0.88
+    },
+    "A3 (Hys=4.0dB, TTT=80ms)": {
+      "hys_db": 4.0,
+      "ttt_ms": 80.0,
+      "ho_total": 306,
+      "ho_in_overlap": 41,
+      "ho_out_overlap": 265,
+      "ho_in_overlap_ratio": 0.13398692810457516,
+      "ho_out_overlap_ratio": 0.8660130718954249
+    },
+    "A3 (Hys=4.0dB, TTT=160ms)": {
+      "hys_db": 4.0,
+      "ttt_ms": 160.0,
+      "ho_total": 274,
+      "ho_in_overlap": 36,
+      "ho_out_overlap": 238,
+      "ho_in_overlap_ratio": 0.13138686131386862,
+      "ho_out_overlap_ratio": 0.8686131386861314
+    },
+    "A3 (Hys=4.0dB, TTT=320ms)": {
+      "hys_db": 4.0,
+      "ttt_ms": 320.0,
+      "ho_total": 178,
+      "ho_in_overlap": 18,
+      "ho_out_overlap": 160,
+      "ho_in_overlap_ratio": 0.10112359550561797,
+      "ho_out_overlap_ratio": 0.898876404494382
+    },
+    "A3 (Hys=4.0dB, TTT=640ms)": {
+      "hys_db": 4.0,
+      "ttt_ms": 640.0,
+      "ho_total": 124,
+      "ho_in_overlap": 8,
+      "ho_out_overlap": 116,
+      "ho_in_overlap_ratio": 0.06451612903225806,
+      "ho_out_overlap_ratio": 0.9354838709677419
+    },
+    "A3 (Hys=4.5dB, TTT=0ms)": {
+      "hys_db": 4.5,
+      "ttt_ms": 0.0,
+      "ho_total": 354,
+      "ho_in_overlap": 40,
+      "ho_out_overlap": 314,
+      "ho_in_overlap_ratio": 0.11299435028248588,
+      "ho_out_overlap_ratio": 0.8870056497175142
+    },
+    "A3 (Hys=4.5dB, TTT=40ms)": {
+      "hys_db": 4.5,
+      "ttt_ms": 40.0,
+      "ho_total": 354,
+      "ho_in_overlap": 40,
+      "ho_out_overlap": 314,
+      "ho_in_overlap_ratio": 0.11299435028248588,
+      "ho_out_overlap_ratio": 0.8870056497175142
+    },
+    "A3 (Hys=4.5dB, TTT=80ms)": {
+      "hys_db": 4.5,
+      "ttt_ms": 80.0,
+      "ho_total": 278,
+      "ho_in_overlap": 40,
+      "ho_out_overlap": 238,
+      "ho_in_overlap_ratio": 0.14388489208633093,
+      "ho_out_overlap_ratio": 0.8561151079136691
+    },
+    "A3 (Hys=4.5dB, TTT=160ms)": {
+      "hys_db": 4.5,
+      "ttt_ms": 160.0,
+      "ho_total": 248,
+      "ho_in_overlap": 35,
+      "ho_out_overlap": 213,
+      "ho_in_overlap_ratio": 0.14112903225806453,
+      "ho_out_overlap_ratio": 0.8588709677419355
+    },
+    "A3 (Hys=4.5dB, TTT=320ms)": {
+      "hys_db": 4.5,
+      "ttt_ms": 320.0,
+      "ho_total": 170,
+      "ho_in_overlap": 15,
+      "ho_out_overlap": 155,
+      "ho_in_overlap_ratio": 0.08823529411764706,
+      "ho_out_overlap_ratio": 0.9117647058823529
+    },
+    "A3 (Hys=4.5dB, TTT=640ms)": {
+      "hys_db": 4.5,
+      "ttt_ms": 640.0,
+      "ho_total": 118,
+      "ho_in_overlap": 7,
+      "ho_out_overlap": 111,
+      "ho_in_overlap_ratio": 0.059322033898305086,
+      "ho_out_overlap_ratio": 0.940677966101695
+    },
+    "A3 (Hys=5.0dB, TTT=0ms)": {
+      "hys_db": 5.0,
+      "ttt_ms": 0.0,
+      "ho_total": 306,
+      "ho_in_overlap": 41,
+      "ho_out_overlap": 265,
+      "ho_in_overlap_ratio": 0.13398692810457516,
+      "ho_out_overlap_ratio": 0.8660130718954249
+    },
+    "A3 (Hys=5.0dB, TTT=40ms)": {
+      "hys_db": 5.0,
+      "ttt_ms": 40.0,
+      "ho_total": 306,
+      "ho_in_overlap": 41,
+      "ho_out_overlap": 265,
+      "ho_in_overlap_ratio": 0.13398692810457516,
+      "ho_out_overlap_ratio": 0.8660130718954249
+    },
+    "A3 (Hys=5.0dB, TTT=80ms)": {
+      "hys_db": 5.0,
+      "ttt_ms": 80.0,
+      "ho_total": 248,
+      "ho_in_overlap": 31,
+      "ho_out_overlap": 217,
+      "ho_in_overlap_ratio": 0.125,
+      "ho_out_overlap_ratio": 0.875
+    },
+    "A3 (Hys=5.0dB, TTT=160ms)": {
+      "hys_db": 5.0,
+      "ttt_ms": 160.0,
+      "ho_total": 216,
+      "ho_in_overlap": 27,
+      "ho_out_overlap": 189,
+      "ho_in_overlap_ratio": 0.125,
+      "ho_out_overlap_ratio": 0.875
+    },
+    "A3 (Hys=5.0dB, TTT=320ms)": {
+      "hys_db": 5.0,
+      "ttt_ms": 320.0,
+      "ho_total": 154,
+      "ho_in_overlap": 14,
+      "ho_out_overlap": 140,
+      "ho_in_overlap_ratio": 0.09090909090909091,
+      "ho_out_overlap_ratio": 0.9090909090909091
+    },
+    "A3 (Hys=5.0dB, TTT=640ms)": {
+      "hys_db": 5.0,
+      "ttt_ms": 640.0,
+      "ho_total": 116,
+      "ho_in_overlap": 7,
+      "ho_out_overlap": 109,
+      "ho_in_overlap_ratio": 0.0603448275862069,
+      "ho_out_overlap_ratio": 0.9396551724137931
+    }
+  }
+}

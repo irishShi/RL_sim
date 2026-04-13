@@ -15,7 +15,7 @@ track_length_m: 3000.0          # 轨道长度（米）
 delta_t_s: 0.05                 # 时间步长（秒，50ms）
 
 # 速度参数（参考 5G‑R 高速铁路场景，车速多在 200~350 km/h）
-random_speed: false             # 是否随机速度
+random_speed: true              # 是否随机速度（true时每个场景在[v_min_kmh,v_max_kmh]采样）
 v_default_kmh: 300.0            # 默认速度（km/h）
 v_min_kmh: 120.0                # 最小速度（km/h）
 v_max_kmh: 350.0                # 最大速度（km/h）
@@ -59,10 +59,38 @@ sinr_outage_db: -6.0            # SINR outage阈值（dB），建议起点-6dB�
 T_out_s: 0.2                    # 连续outage持续时间阈值（秒），建议200ms=4步，可扫100/200/300ms
 # 注意：切换中断期间也计入outage
 
-# Reward设计（支持R0/R1/R2消融）
-reward_type: "R2"               # R0=仅SINR, R1=SINR+HO惩罚, R2=SINR+HO+Outage惩罚
-lambda_ho: 2.0                   # 切换惩罚系数（用于R1/R2），标定：多一次切换≈1秒SINR提升1-2dB的代价
-lambda_out: 15.0                 # Outage惩罚系数（用于R2），应大于lambda_ho
+# Reward设计（R3为推荐：分级outage + 中断主惩罚）
+reward_type: "R3"               # R0=仅SINR, R1=HO惩罚, R2=旧版二值outage, R3=分级outage+中断主惩罚
+lambda_ho: 2.0                   # 旧版HO惩罚系数（R1/R2）
+lambda_out: 15.0                 # 最高等级outage惩罚（R2/R3）
+
+# R3: 分级SINR/Outage惩罚
+sinr_warn_db: -3.0               # 轻度劣化阈值（dB）
+sinr_degrade_db: -5.0            # 中度劣化阈值（dB）
+lambda_sinr_warn: 1.5            # 轻度惩罚
+lambda_sinr_degrade: 4.0         # 中度惩罚
+
+# R3: 用中断时长替代切换次数作为主惩罚
+lambda_interruption: 6.0         # 每个中断时隙惩罚
+lambda_ho_minor: 0.2             # 可选轻量HO惩罚（辅助）
+
+# 奖励尺度系数（可被训练阶段策略动态覆盖）
+reward_outage_scale: 1.0
+reward_interruption_scale: 1.0
+reward_ho_scale: 1.0
+
+# 训练阶段权重调度（建议用于 collect_data.py 生成离线数据）
+reward_training_phases:
+  enabled: true
+  phases:
+    - end_episode_ratio: 0.4
+      reward_outage_scale: 1.3        # 前期先保可用性
+      reward_interruption_scale: 0.8
+      reward_ho_scale: 1.0
+    - end_episode_ratio: 1.0
+      reward_outage_scale: 1.0        # 后期强化中断抑制
+      reward_interruption_scale: 1.4
+      reward_ho_scale: 1.0
 
 # 测量滤波增强
 enable_delta_sinr_filter: true  # 是否启用SINR差值滤波
@@ -70,7 +98,7 @@ delta_sinr_filter_alpha: 0.7    # SINR差值IIR滤波系数（等效时间常数
 
 # TTS配置（支持时间和距离两种模式）
 TTS_mode: "time"                # "time"=按时间, "distance"=按距离
-T_guard_s: 1.0                   # 切换保护时间（秒），用于time模式
+T_guard_s: 0.0                   # 切换保护时间（秒），0表示关闭time模式保护
 T_guard_m: 50.0                  # 切换保护距离（米），用于distance模式（高铁场景更直观）
 
 # TTT量化（确保TTT是50ms的倍数）
@@ -101,7 +129,7 @@ C_ho: 0.3                        # 切换惩罚系数
 C_interruption: 0.0              # 切换中断惩罚系数（默认0，因为中断期间SINR已经很低）
 
 # 切换保护时间
-T_guard_s: 1.0                   # 切换保护时间（秒）
+T_guard_s: 0.0                   # 切换保护时间（秒），0表示关闭
 
 # 切换中断配置
 ho_interruption_slots: 1        # 切换导致的通信中断时隙数（默认1个时隙，即50ms）
