@@ -53,6 +53,23 @@ class ReplayBuffer:
         
         self.pos = (self.pos + 1) % self.capacity
         self.size = min(self.size + 1, self.capacity)
+
+    def load_from_dataset(self, dataset: Dict):
+        """从离线数据集批量加载（比逐条store更快）"""
+        num = min(len(dataset['actions']), self.capacity)
+        if num <= 0:
+            return
+
+        self.obs_windows[:num] = dataset['obs'][:num]
+        self.actions[:num] = dataset['actions'][:num]
+        self.rewards[:num] = dataset['rewards'][:num]
+        self.next_obs_windows[:num] = dataset['next_obs'][:num]
+        self.dones[:num] = dataset['dones'][:num]
+        self.delta_rsrp_targets[:num] = dataset['delta_targets'][:num]
+
+        self.priorities[:num] = self.max_priority
+        self.pos = num % self.capacity
+        self.size = num
     
     def sample(self, batch_size: int, beta: float = 0.4) -> Optional[Dict]:
         """
@@ -153,7 +170,7 @@ class NStepBuffer:
             'reward': reward_n,  # N-step 累积奖励
             'next_obs_window': last['next_obs_window'],
             'done': last['done'],
-            'delta_rsrp_target': first['delta_rsrp_target']  # 使用第一步的目标
+            'delta_rsrp_target': last['delta_rsrp_target']  # 与 next_obs_window 对齐
         }
         
         # 移除第一步
@@ -179,7 +196,7 @@ class NStepBuffer:
                 'reward': reward_n,  # 累积奖励
                 'next_obs_window': last['next_obs_window'],
                 'done': last['done'],
-                'delta_rsrp_target': first['delta_rsrp_target']
+                'delta_rsrp_target': last['delta_rsrp_target']  # 与 next_obs_window 对齐
             })
             
             self.buffer.popleft()

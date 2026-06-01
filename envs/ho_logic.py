@@ -21,6 +21,9 @@ class HandoverLogic:
         self.current_ttt = 160.0  # 当前 TTT 参数（ms）
         self.ttt_timer = 0.0  # TTT 计时器（秒）
         self.a3_condition_met = False  # A3 事件条件是否满足
+        # 最近一步的切换触发/阻塞状态（用于统计切换成功率）
+        self.last_ho_triggered = False
+        self.last_ho_blocked = False
     
     def can_handover(self, current_time: float, current_position: float = None) -> bool:
         """
@@ -116,6 +119,8 @@ class HandoverLogic:
         Returns:
             (新的服务小区, 是否成功执行切换)
         """
+        self.last_ho_triggered = False
+        self.last_ho_blocked = False
         if self.can_handover(current_time, current_position):
             new_cell = 1 - serving_cell  # A<->B 切换
             self.last_ho_time = current_time
@@ -139,16 +144,24 @@ class HandoverLogic:
         Returns:
             (新的服务小区, 是否成功执行切换)
         """
+        # 重置“最近一步”标记
+        self.last_ho_triggered = False
+        self.last_ho_blocked = False
+
         # 检查 A3 事件和 TTT
         should_handover = self.check_a3_event(delta_rsrp, dt)
+        if should_handover:
+            self.last_ho_triggered = True
         
         # 如果满足切换条件且通过保护时间/距离检查，执行切换
-        if should_handover and self.can_handover(current_time, current_position):
-            new_cell = 1 - serving_cell  # A<->B 切换
-            self.last_ho_time = current_time
-            if current_position is not None:
-                self.last_ho_position = current_position
-            return new_cell, True
+        if should_handover:
+            if self.can_handover(current_time, current_position):
+                new_cell = 1 - serving_cell  # A<->B 切换
+                self.last_ho_time = current_time
+                if current_position is not None:
+                    self.last_ho_position = current_position
+                return new_cell, True
+            self.last_ho_blocked = True
         
         return serving_cell, False
     
@@ -172,6 +185,8 @@ class HandoverLogic:
         self.current_ttt = 160.0
         self.ttt_timer = 0.0
         self.a3_condition_met = False
+        self.last_ho_triggered = False
+        self.last_ho_blocked = False
     
     def get_current_params(self) -> Tuple[float, float]:
         """获取当前 Hys 和 TTT 参数"""

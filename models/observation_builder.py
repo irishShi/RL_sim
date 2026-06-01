@@ -135,17 +135,17 @@ class ObservationWindow:
         Returns:
             window: [N, obs_dim] 如果窗口未满，用第一个观测填充
         """
-        if len(self.window) == 0:
-            # 如果窗口为空，返回零填充
+        n = len(self.window)
+        if n == 0:
             return np.zeros((self.window_size, self.obs_dim), dtype=np.float32)
-        
-        # 如果窗口未满，用第一个观测填充
-        first_obs = self.window[0]
-        while len(self.window) < self.window_size:
-            self.window.appendleft(first_obs)
-        
-        # 转换为 numpy 数组
-        window = np.array(list(self.window), dtype=np.float32)
+
+        window = np.array(self.window, dtype=np.float32)  # [n, obs_dim]
+
+        if n < self.window_size:
+            pad_count = self.window_size - n
+            padding = np.broadcast_to(window[0:1], (pad_count, self.obs_dim))
+            window = np.concatenate([padding, window], axis=0)
+
         return window  # [N, obs_dim]
     
     def is_ready(self) -> bool:

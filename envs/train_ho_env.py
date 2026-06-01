@@ -58,7 +58,7 @@ class TrainHandoverEnv(gym.Env):
             # 从配置读取动作空间参数，或使用默认值
             action_space_cfg = self.cfg.get("action_space", {})
             hys_set = action_space_cfg.get("hys_set", [1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0])
-            ttt_set = action_space_cfg.get("ttt_set", [0, 40, 80, 160, 320, 640])
+            ttt_set = action_space_cfg.get("ttt_set", [0, 50, 100, 150, 300, 650])
             
             # 计算动作数量
             num_actions = len(hys_set) * len(ttt_set)
@@ -123,7 +123,7 @@ class TrainHandoverEnv(gym.Env):
             "overlap_zone_time": 0.0,  # 处于切换重叠区内的累计时间（s）
             "overlap_zone_sinr_time_weighted_sum": 0.0,  # 重叠区内SINR按时间积分（dB*s）
         }
-        self.last_overlap_ho_transition = None  # 最近一次“重叠区内切换”方向 (from_cell, to_cell)
+        self.last_overlap_ho_transition = None  # 最近一次"重叠区内切换"方向 (from_cell, to_cell)
         
         # 9) 测量滤波增强（SINR差值滤波）
         self.enable_delta_sinr_filter = self.cfg.get("enable_delta_sinr_filter", True)
@@ -145,7 +145,7 @@ class TrainHandoverEnv(gym.Env):
         if hys_set is None:
             hys_set = [1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0]
         if ttt_set is None:
-            ttt_set = [0, 40, 80, 160, 320, 640]
+            ttt_set = [0, 50, 100, 150, 300, 650]
         
         hys_set = np.array(hys_set, dtype=np.float32)
         ttt_set = np.array(ttt_set, dtype=np.float32)
@@ -223,7 +223,7 @@ class TrainHandoverEnv(gym.Env):
             "rsrp_max_dbm": -60.0,
             "sinr_min_db": -10.0,
             "sinr_max_db": 20.0,
-            "reward_type": "R3",  # R0/R1/R2(兼容旧版)/R3(分级Outage+中断主惩罚)
+            "reward_type": "R4",  # R0/R1/R2(兼容旧版)/R3(分级Outage+中断主惩罚)/R4(事件驱动)
             "lambda_ho": 2.0,  # 旧版HO惩罚（R1/R2）
             "lambda_out": 15.0,  # 旧版outage惩罚（R2）/R3最高等级惩罚
             # R3: 分级SINR/outage惩罚
@@ -250,12 +250,9 @@ class TrainHandoverEnv(gym.Env):
             "ho_interruption_sinr_db": -20.0,  # 中断期间的SINR值（dB），设置为很低的值以模拟通信中断
             "ho_interruption_rsrp_dbm": -120.0,  # 中断期间的RSRP值（dBm），设置为很低的值以模拟通信中断
 
-            # 切换重叠区 KPI（5G-R：单侧 = 1/2 过渡距离 + 测量区 + 执行区；本仿真用可配置米数 + v×时延近似测量/执行）
+            # 动态切换区 KPI（基于 ΔRSRP 实时判定，参考铁路 5G-R 规划文献）
             "ho_overlap_kpi_enabled": True,
-            "ho_overlap_midpoint_m": None,  # None 表示轨道中点 track_length_m/2（两小区边界）
-            "ho_overlap_transition_half_m": 25.0,  # 单侧计入的 1/2 切换过渡距离（m）
-            "ho_overlap_meas_exec_delay_s": 0.2,  # 测量+执行等效时延（s），单侧附加距离 = v * delay
-            "ho_overlap_meas_exec_extra_m": 0.0,  # 除 v×delay 外再叠加的固定距离（m）
+            "ho_overlap_delta_rsrp_db": 5.0,  # ΔRSRP 门限 N（dB），用于切换区左右边界定义
 
             # 快衰落控制（38.901 多径的小尺度衰落，简化为 Rayleigh / Rician）
             "enable_fast_fading": False,
@@ -291,56 +288,63 @@ class TrainHandoverEnv(gym.Env):
         if options is not None and "scenario_data" in options:
             scenario_data = options["scenario_data"]
         
+        # 使用 Gymnasium 管理的 self.np_random（由 super().reset(seed=seed) 设置），
+        # 避免污染全局 np.random 状态，确保数据收集策略的随机性不受环境 seed 影响
+        rng = self.np_random
+        self.weather_model.set_rng(rng)
+        self.channel_model.set_rng(rng)
+
         if scenario_data is not None:
             # 使用预生成的场景数据
             # 1) 位置和速度（从场景数据中获取）
             self.position_m = 0.0
             self.velocity_mps = scenario_data["velocity_mps"]
-            
+
             self.time_step = 0
             self.serving_cell = 0  # 默认在 A 小区
-            
+
             # 2) 设置天气参数（从场景数据中获取）
             weather = scenario_data["weather"]
             self.weather_model.temperature = weather["temperature"]
             self.weather_model.humidity = weather["humidity"]
             self.weather_model.pm25 = weather["pm25"]
-            
+
             # 2.5) 重置信道模型的阴影衰落状态（传入场景数据）
             self.channel_model.reset(seed=None, scenario_data=scenario_data)
         else:
-            # 使用原来的方法：随机生成场景
-            # 关键：只设置一次seed，然后按固定顺序使用随机数
-            # 这样可以确保相同的seed总是生成相同的场景
+            # 使用 self.np_random 生成场景，确保同一 seed 生成相同的场景
             # 随机数使用顺序（固定）：
             #   1. 速度采样（如果random_speed=True，消耗1个；否则跳过但保持位置）
             #   2-4. 天气采样（温度、湿度、PM2.5，消耗3个）
             #   5-6. 阴影衰落初始值（阴影A、阴影B，消耗2个）
-            if seed is not None:
-                np.random.seed(seed)
-            
+
             # 1) 位置和速度
             self.position_m = 0.0
             if self.cfg["random_speed"]:
-                # 消耗第1个随机数
-                v_kmh = np.random.uniform(self.cfg["v_min_kmh"], self.cfg["v_max_kmh"])
+                speed_tiers_cfg = self.cfg.get("speed_tiers", {})
+                if speed_tiers_cfg.get("enabled", False):
+                    # 分层速度采样：按权重从各速度段采样
+                    tiers = speed_tiers_cfg["tiers"]
+                    weights = np.array([t["weight"] for t in tiers], dtype=np.float64)
+                    weights /= weights.sum()
+                    tier_idx = int(rng.choice(len(tiers), p=weights))
+                    tier = tiers[tier_idx]
+                    v_kmh = float(rng.uniform(tier["range"][0], tier["range"][1]))
+                else:
+                    v_kmh = float(rng.uniform(self.cfg["v_min_kmh"], self.cfg["v_max_kmh"]))
             else:
-                # 即使不使用随机速度，也消耗一个随机数，确保后续随机数位置一致
-                # 这样无论random_speed设置如何，天气和阴影衰落都使用相同的随机数位置
-                _ = np.random.uniform(0.0, 1.0)  # 消耗第1个随机数（丢弃）
+                _ = rng.uniform(0.0, 1.0)  # 消耗随机数保持一致性
                 v_kmh = self.cfg["v_default_kmh"]
             self.velocity_mps = v_kmh / 3.6
-            
+
             self.time_step = 0
             self.serving_cell = 0  # 默认在 A 小区
-            
+
             # 2) 采样天气（消耗第2-4个随机数：温度、湿度、PM2.5）
-            # 注意：不重新设置seed，使用当前随机数生成器的状态
-            self.weather_model.sample_weather(seed=None)
-            
+            self.weather_model.sample_weather()
+
             # 2.5) 重置信道模型的阴影衰落状态
             # 阴影衰落初始值采样（消耗第5-6个随机数：阴影A、阴影B）
-            # 注意：不重新设置seed，使用当前随机数生成器的状态
             self.channel_model.reset(seed=None)
         
         # 3) 初始化上一时刻测量（用于 IIR 滤波）
@@ -379,8 +383,24 @@ class TrainHandoverEnv(gym.Env):
         self.last_delta_sinr_filtered = None
         self.sinr_history = []
         
+        # 9) 动态切换区状态（基于 ΔRSRP 实时判定）
+        self._current_rsrp_A = None
+        self._current_rsrp_B = None
+        # 单一连续切换重叠区边界（避免一个场景出现多个重叠区片段）
+        # 定义见 _update_handover_overlap_zone_bounds()
+        self._overlap_zone_left_m = None
+        self._overlap_zone_right_m = None
+        self._overlap_zone_closed = False  # 一旦确认离开切换区后闭合右边界
+        self._overlap_zone_exit_streak = 0  # 连续满足 delta < -N 的步数（用于抗快衰落抖动）
+        
         obs = self._build_observation()
-        info = {}
+        info = {
+            "rsrp_serv_dbm": self.last_rsrp_serv,
+            "rsrp_neig_dbm": self.last_rsrp_neig,
+            "sinr_serv_db": self.last_sinr_serv,
+            "position_m": self.position_m,
+            "serving_cell": self.serving_cell,
+        }
         return obs, info
     
     def step(self, action: int) -> Tuple[np.ndarray, float, bool, bool, Dict]:
@@ -406,51 +426,41 @@ class TrainHandoverEnv(gym.Env):
         # 2) 处理 HO 行为（先处理切换，以便在切换发生的时隙立即应用中断）
         ho_executed = False
         old_serving_cell = self.serving_cell
-        need_recompute_link = False  # 标记是否需要重新计算链路
-        
+
         if self.use_hys_ttt:
             # 新模式：根据 Hys/TTT 参数判断是否切换
             # 2.1) 将动作转换为 Hys/TTT 参数
             hys, ttt = self._action_to_hys_ttt(action)
-            
+
             # TTT量化：确保TTT是50ms的倍数
             if self.cfg.get("ttt_quantize_to_50ms", True):
                 dt_ms = self.cfg["delta_t_s"] * 1000.0  # 50ms
                 ttt = round(ttt / dt_ms) * dt_ms  # 量化到50ms网格
-            
+
             self.ho_logic.update_hys_ttt(hys, ttt)
-            
-            # 2.2) 先计算一次链路以获取当前 RSRP（用于判断切换）
-            rsrp_A_temp, rsrp_B_temp, _, _ = self.channel_model.compute_link_metrics(self.position_m)
-            
+
+            # 2.2) 计算链路（仅一次，避免 AR(1) 阴影衰落被重复推进）
+            rsrp_A, rsrp_B, sinr_A, sinr_B = self.channel_model.compute_link_metrics(self.position_m)
+
             if self.serving_cell == 0:   # A 为服务小区
-                rsrp_serv_temp = rsrp_A_temp
-                rsrp_neig_temp = rsrp_B_temp
+                rsrp_serv_temp = rsrp_A
+                rsrp_neig_temp = rsrp_B
             else:
-                rsrp_serv_temp = rsrp_B_temp
-                rsrp_neig_temp = rsrp_A_temp
-            
+                rsrp_serv_temp = rsrp_B
+                rsrp_neig_temp = rsrp_A
+
             # 2.3) 计算 ΔRSRP
             delta_rsrp = rsrp_neig_temp - rsrp_serv_temp
-            
+
             # 2.4) 根据 A3 事件和 TTT 判断是否切换（传入位置用于距离模式）
             new_cell, ho_executed = self.ho_logic.execute_handover_with_a3(
                 current_time, self.serving_cell, delta_rsrp, dt, self.position_m
             )
-            
+
             if ho_executed:
                 self.serving_cell = new_cell
                 # 切换发生，设置中断时隙数（中断在切换发生的时隙立即开始）
                 self.ho_interruption_remaining = self.cfg.get("ho_interruption_slots", 1)
-                need_recompute_link = True  # 切换后需要重新计算链路
-            else:
-                # 未切换，可以复用之前计算的结果
-                rsrp_A, rsrp_B = rsrp_A_temp, rsrp_B_temp
-                # SINR 需要重新计算（因为服务小区没变，但位置变了，所以还是需要重新计算）
-                # 实际上，由于位置变了，RSRP 也会变，所以还是需要重新计算
-                # 但我们可以优化：只在切换时重新计算，否则复用
-                # 不过为了简化，我们还是统一重新计算
-                need_recompute_link = True
         else:
             # 兼容模式：直接根据动作判断
             if action == 1:
@@ -459,16 +469,20 @@ class TrainHandoverEnv(gym.Env):
                     self.serving_cell = new_cell
                     # 切换发生，设置中断时隙数（中断在切换发生的时隙立即开始）
                     self.ho_interruption_remaining = self.cfg.get("ho_interruption_slots", 1)
-        
-        # 2.5) 检查并更新切换中断状态（在切换处理后检查，以便在切换发生的时隙立即应用中断）
+
+            # 兼容模式下计算链路
+            rsrp_A, rsrp_B, sinr_A, sinr_B = self.channel_model.compute_link_metrics(self.position_m)
+
+        # 2.5) 缓存当前 rsrp_A / rsrp_B，供动态切换区判定使用
+        self._current_rsrp_A = rsrp_A
+        self._current_rsrp_B = rsrp_B
+        self._update_handover_overlap_zone_bounds(self.position_m, rsrp_A, rsrp_B)
+
+        # 2.6) 检查并更新切换中断状态（在切换处理后检查，以便在切换发生的时隙立即应用中断）
         in_interruption = False
         if self.ho_interruption_remaining > 0:
             in_interruption = True
             self.ho_interruption_remaining -= 1
-        
-        # 3) 计算链路（位置/天气 -> 路损 -> RSRP/SINR）
-        # 注意：即使未切换，由于位置变化，链路也会变化，所以总是需要重新计算
-        rsrp_A, rsrp_B, sinr_A, sinr_B = self.channel_model.compute_link_metrics(self.position_m)
         
         if self.serving_cell == 0:   # A 为服务小区
             rsrp_serv_raw = rsrp_A
@@ -592,6 +606,11 @@ class TrainHandoverEnv(gym.Env):
             "rsrp_neig_dbm": rsrp_neig,
             "sinr_serv_db": sinr_serv,
             "ho_executed": ho_executed,
+            # 切换成功率统计辅助字段：
+            # ho_triggered: A3条件+TTT达到（可视作"触发尝试"）
+            # ho_blocked_by_guard: 触发但被保护时间/距离窗口阻塞
+            "ho_triggered": self.ho_logic.last_ho_triggered,
+            "ho_blocked_by_guard": self.ho_logic.last_ho_blocked,
             "position_m": self.position_m,
             "serving_cell": self.serving_cell,
             # 添加原始 A/B RSRP（未经过 L3 滤波，用于可视化）
@@ -612,6 +631,8 @@ class TrainHandoverEnv(gym.Env):
             # TTS状态（是否处于保护窗口）
             "in_tts_window": not self.ho_logic.can_handover(current_time, self.position_m),
             "time_since_last_ho": current_time - self.ho_logic.last_ho_time,
+            # 动态切换区标志（供外部分析和未来观测增强使用）
+            "in_overlap_zone": self._in_handover_overlap_zone(self.position_m),
         }
         
         # 如果episode结束，添加最终KPI
@@ -685,13 +706,15 @@ class TrainHandoverEnv(gym.Env):
 
     def _compute_reward(self, sinr_serv: float, outage: bool, ho_executed: bool, in_interruption: bool = False) -> float:
         """
-        计算奖励（支持R0/R1/R2/R3）
+        计算奖励（支持R0/R1/R2/R3/R4）
         
         R0: r_t = SINR_t (仅SINR)
         R1: r_t = SINR_t - λ_ho * 1_{HO} (SINR + 切换惩罚)
         R2: r_t = SINR_t - λ_out * 1_{SINR<γ_out} - λ_ho * 1_{HO} (SINR + Outage惩罚 + 切换惩罚)
         R3: r_t = SINR_t - 分级SINR/Outage惩罚 - λ_int*1_{interruption} - λ_ho_minor*1_{HO}
             （以中断时长惩罚为主，HO次数惩罚为辅）
+        R4: 事件驱动型奖励，以零为基线。正常时隙奖励为零，仅在关键事件（outage/中断/
+            良好SINR余量/切换重叠区表现）时给出非零信号，拉大好坏动作的差距。
         
         Args:
             sinr_serv: 服务小区SINR（dB）
@@ -702,32 +725,26 @@ class TrainHandoverEnv(gym.Env):
         Returns:
             奖励值
         """
-        # 把当前 SINR 按 [sinr_min, sinr_max] 归一化到 [0,1]
         sinr_min, sinr_max = self.cfg["sinr_min_db"], self.cfg["sinr_max_db"]
         sinr_norm = self._normalize(sinr_serv, sinr_min, sinr_max)
         
-        # 获取reward类型（R0/R1/R2）
-        reward_type = self.cfg.get("reward_type", "R3")
+        reward_type = self.cfg.get("reward_type", "R4")
         lambda_ho = self.cfg.get("lambda_ho", 2.0)
         lambda_out = self.cfg.get("lambda_out", 15.0)
         
         if reward_type == "R0":
-            # R0: 仅SINR
             reward = sinr_norm
         elif reward_type == "R1":
-            # R1: SINR + 切换惩罚
             reward = sinr_norm
             if ho_executed:
                 reward -= lambda_ho
         elif reward_type == "R2":
-            # R2: SINR + Outage惩罚 + 切换惩罚
             reward = sinr_norm
             if outage:
                 reward -= lambda_out
             if ho_executed:
                 reward -= lambda_ho
         elif reward_type == "R3":
-            # R3: 分级Outage惩罚 + 中断主惩罚 + 轻量HO惩罚
             reward = sinr_norm
             out_scale = float(self.cfg.get("reward_outage_scale", 1.0))
             int_scale = float(self.cfg.get("reward_interruption_scale", 1.0))
@@ -740,50 +757,212 @@ class TrainHandoverEnv(gym.Env):
                 reward -= int_scale * lambda_int
             if ho_executed:
                 reward -= ho_scale * lambda_ho_minor
+        elif reward_type == "R4":
+            reward = self._compute_reward_r4(sinr_serv, outage, ho_executed, in_interruption)
+        elif reward_type == "R5":
+            reward = self._compute_reward_r5(sinr_serv, outage, ho_executed, in_interruption)
         else:
-            # 默认使用R3
-            reward = sinr_norm
-            out_scale = float(self.cfg.get("reward_outage_scale", 1.0))
-            int_scale = float(self.cfg.get("reward_interruption_scale", 1.0))
-            ho_scale = float(self.cfg.get("reward_ho_scale", 1.0))
-            lambda_int = float(self.cfg.get("lambda_interruption", 6.0))
-            lambda_ho_minor = float(self.cfg.get("lambda_ho_minor", 0.2))
-            reward -= out_scale * self._compute_tiered_outage_penalty(sinr_serv, outage)
-            if in_interruption:
-                reward -= int_scale * lambda_int
-            if ho_executed:
-                reward -= ho_scale * lambda_ho_minor
+            reward = self._compute_reward_r5(sinr_serv, outage, ho_executed, in_interruption)
         
         return float(reward)
-    
-    def _overlap_half_width_m(self) -> float:
-        """
-        切换重叠区在轨道中点单侧的半宽 W（米）。
 
-        与 5G-R 文献一致：单侧距离 ≈ (1/2)切换过渡距离 + 切换测量距离 + 切换执行距离；
-        其中测量/执行区用「固定米数 + 车速×等效时延」在本项目中近似，便于与 delta_t、车速配置对齐。
+    def _compute_reward_r4(self, sinr_serv: float, outage: bool,
+                           ho_executed: bool, in_interruption: bool) -> float:
+        """
+        R4: 事件驱动型奖励函数。
+
+        设计原则：
+        - 基线为零：正常时隙（SINR 在 warn 阈值以上、无中断、无切换）奖励 = 0。
+          这消除了 R3 中 sinr_norm 正向偏置导致好坏动作差距被稀释的问题。
+        - 惩罚信号显著：outage / SINR劣化 / 切换中断 给出大幅负奖励，确保信噪比远高于
+          环境本身的随机方差。
+        - 正向激励稀疏但明确：只在"切换重叠区 SINR 维持良好"或"高速场景保持高 SINR"
+          时给正奖励，引导策略学习场景自适应。
+        - 乒乓重惩：在重叠区内发生的乒乓方向切换，给额外惩罚。
+        """
+        cfg = self.cfg
+        reward = 0.0
+
+        # ── 1. 分级 SINR / Outage 惩罚 ──
+        out_scale = float(cfg.get("reward_outage_scale", 1.0))
+        int_scale = float(cfg.get("reward_interruption_scale", 1.0))
+        ho_scale = float(cfg.get("reward_ho_scale", 1.0))
+
+        if outage:
+            reward -= out_scale * float(cfg.get("r4_lambda_outage", 10.0))
+        elif sinr_serv < float(cfg.get("sinr_degrade_db", -5.0)):
+            reward -= out_scale * float(cfg.get("r4_lambda_degrade", 3.0))
+        elif sinr_serv < float(cfg.get("sinr_warn_db", -3.0)):
+            reward -= out_scale * float(cfg.get("r4_lambda_warn", 1.0))
+
+        # ── 2. 切换中断惩罚 ──
+        if in_interruption:
+            reward -= int_scale * float(cfg.get("r4_lambda_interruption", 5.0))
+
+        # ── 3. 切换惩罚 ──
+        if ho_executed:
+            reward -= ho_scale * float(cfg.get("r4_lambda_ho", 1.5))
+
+        # ── 4. 切换重叠区质量奖励/惩罚 ──
+        # 在切换关键区域，SINR 维持良好应得到正向激励
+        in_oz = self._in_handover_overlap_zone(self.position_m)
+        if in_oz:
+            sinr_good_thresh = float(cfg.get("r4_overlap_sinr_good_db", 5.0))
+            sinr_bad_thresh = float(cfg.get("r4_overlap_sinr_bad_db", -2.0))
+            if sinr_serv >= sinr_good_thresh:
+                reward += float(cfg.get("r4_overlap_bonus", 0.3))
+            elif sinr_serv < sinr_bad_thresh:
+                reward -= float(cfg.get("r4_overlap_penalty", 1.0))
+
+        # ── 5. SINR 余量 bonus（仅在高速场景时给，鼓励场景自适应） ──
+        v_mps = self.velocity_mps if self.velocity_mps is not None else 0.0
+        v_fast_thresh = float(cfg.get("r4_fast_speed_mps", 83.3))  # 约 300 km/h
+        sinr_margin_db = float(cfg.get("r4_sinr_margin_db", 8.0))
+        if v_mps >= v_fast_thresh and sinr_serv >= sinr_margin_db and not outage:
+            reward += float(cfg.get("r4_sinr_margin_bonus", 0.2))
+
+        return reward
+    
+    def _compute_reward_r5(self, sinr_serv: float, outage: bool,
+                           ho_executed: bool, in_interruption: bool) -> float:
+        """
+        R5: 切换区聚焦型奖励函数。
+
+        设计原则：
+        - 切换区外（单基站主导区域）agent 决策几乎无影响 → 奖励≈0，仅保留安全网
+        - 切换区内（由 ΔRSRP 门限 N 定义的“单一连续重叠区”）是切换决策真正发挥作用的区域：
+          a) "次优服务小区"连续惩罚（动作依赖）：当邻区 RSRP > 服务区 RSRP，
+             说明 agent 的 (Hys, TTT) 太保守，该切未切 → 每步给持续惩罚
+          b) 事件惩罚：outage / 中断 / 切换 / 乒乓
+        - 好策略：及时切换到强小区（次优惩罚少）+ 切换次数适度（事件惩罚少）
+        - 坏策略：长期留在弱小区（次优惩罚大）或频繁乒乓（事件惩罚大）
+        """
+        cfg = self.cfg
+        in_oz = self._in_handover_overlap_zone(self.position_m)
+
+        if not in_oz:
+            # ── 切换区外：奖励≈0，仅保留安全网 ──
+            reward = 0.0
+            if outage:
+                reward -= float(cfg.get("r5_outside_outage_penalty", 1.0))
+            if in_interruption:
+                reward -= float(cfg.get("r5_outside_interruption_penalty", 0.5))
+            return reward
+
+        # ── 切换区内 ──
+        reward = 0.0
+
+        # 1. 次优服务小区惩罚（动作依赖的连续信号）
+        #    当邻区信号优于服务区，说明 agent 应该已经切换但没有 →
+        #    动作的 (Hys, TTT) 决定了切换时机，因此这个惩罚是动作因果相关的
+        if not in_interruption and self._current_rsrp_A is not None:
+            if self.serving_cell == 0:
+                rsrp_serv_now = self._current_rsrp_A
+                rsrp_neig_now = self._current_rsrp_B
+            else:
+                rsrp_serv_now = self._current_rsrp_B
+                rsrp_neig_now = self._current_rsrp_A
+            delta = rsrp_neig_now - rsrp_serv_now  # 正值 = 邻区更强
+            if delta > 0:
+                subopt_range = float(cfg.get("r5_subopt_range_db", 6.0))
+                subopt_alpha = float(cfg.get("r5_subopt_alpha", 0.4))
+                subopt = min(delta / subopt_range, 1.0)
+                reward -= subopt_alpha * subopt
+
+        # 2. SINR shaping（可选，默认关闭）
+        alpha = float(cfg.get("r5_sinr_shaping_alpha", 0.0))
+        if alpha > 0:
+            sinr_target = float(cfg.get("r5_sinr_target_db", 2.0))
+            sinr_range = float(cfg.get("r5_sinr_range_db", 10.0))
+            sinr_shaped = max(-1.0, min(1.0, (sinr_serv - sinr_target) / sinr_range))
+            reward += alpha * sinr_shaped
+
+        # 3. Outage 惩罚（最严重）
+        if outage:
+            reward -= float(cfg.get("r5_outage_penalty", 5.0))
+
+        # 4. 切换中断惩罚
+        if in_interruption:
+            reward -= float(cfg.get("r5_interruption_penalty", 2.0))
+
+        # 5. 切换执行惩罚
+        if ho_executed:
+            reward -= float(cfg.get("r5_ho_penalty", 1.0))
+            # 乒乓切换额外惩罚（_update_kpis 在 reward 之前调用，已设置标志）
+            if self._r5_pingpong_this_step:
+                reward -= float(cfg.get("r5_pingpong_extra_penalty", 2.0))
+
+        return reward
+
+    def _update_handover_overlap_zone_bounds(self, position_m: float, rsrp_A_dbm: float, rsrp_B_dbm: float):
+        """
+        更新“单一连续切换重叠区”的左右边界。
+
+        目标：避免按 |ΔRSRP| ≤ N 逐点判定导致一个场景出现多个重叠区片段。
+
+        定义（N = ho_overlap_delta_rsrp_db）：
+        - 左边界：从左向右扫描，首次满足 (RSRP_A - RSRP_B) ≤ +N 的位置
+          （即 A 不再“比 B 强超过 N dB” 的最早点）
+        - 右边界：从左向右扫描，在左边界之后，满足 (RSRP_A - RSRP_B) ≥ -N 的最右位置
+          （即 A 尚未“比 B 弱超过 N dB” 的最右点）
+
+        最终切换区为区间 [x_left, x_right]（若边界不存在则视为无切换区）。
         """
         if not self.cfg.get("ho_overlap_kpi_enabled", True):
-            return 0.0
-        v = float(self.velocity_mps) if self.velocity_mps is not None else 0.0
-        t_half = float(self.cfg.get("ho_overlap_transition_half_m", 25.0))
-        delay = float(self.cfg.get("ho_overlap_meas_exec_delay_s", 0.2))
-        extra = float(self.cfg.get("ho_overlap_meas_exec_extra_m", 0.0))
-        return max(0.0, t_half + extra + max(v, 0.0) * delay)
-    
-    def _in_handover_overlap_zone(self, position_m: float) -> bool:
-        """列车位置是否落在以两小区几何中点为心的切换重叠区内。"""
+            return
+        if rsrp_A_dbm is None or rsrp_B_dbm is None:
+            return
+        N = float(self.cfg.get("ho_overlap_delta_rsrp_db", 5.0))
+        delta = float(rsrp_A_dbm - rsrp_B_dbm)
+
+        # 左边界：首次进入 (delta <= +N)
+        if self._overlap_zone_left_m is None:
+            if delta <= N:
+                self._overlap_zone_left_m = float(position_m)
+                # 进入后默认认为切换区“连续存在”，右边界先随位置推进，直到确认离开再闭合
+                self._overlap_zone_right_m = float(position_m)
+                self._overlap_zone_closed = False
+                self._overlap_zone_exit_streak = 0
+            return
+
+        # 已闭合则不再更新
+        if self._overlap_zone_closed:
+            return
+
+        # 右边界闭合判定：为避免快衰落造成 delta 短暂跌破 -N 而形成多个碎片区，
+        # 采用“连续 confirm_steps 步 delta < -N”才认为真正离开切换区。
+        confirm_steps = int(self.cfg.get("ho_overlap_exit_confirm_steps", 3))
+        if delta < -N:
+            self._overlap_zone_exit_streak += 1
+            if self._overlap_zone_exit_streak >= max(1, confirm_steps):
+                # 右边界保持为“最后一次更新的位置”，闭合区间
+                self._overlap_zone_closed = True
+            return
+
+        # 仍处于 (-N) 右侧：持续推进右边界并清空离开计数
+        self._overlap_zone_exit_streak = 0
+        self._overlap_zone_right_m = float(position_m)
+
+    def _in_handover_overlap_zone(self, position_m: float = None) -> bool:
+        """
+        单一连续切换重叠区判定（基于左右边界区间）。
+
+        边界由 _update_handover_overlap_zone_bounds() 在线更新，N 由配置 ho_overlap_delta_rsrp_db 控制。
+        """
         if not self.cfg.get("ho_overlap_kpi_enabled", True):
             return False
-        W = self._overlap_half_width_m()
-        if W <= 0.0:
+        if position_m is None:
+            position_m = float(self.position_m)
+        if self._overlap_zone_left_m is None:
             return False
-        mid = self.cfg.get("ho_overlap_midpoint_m")
-        if mid is None:
-            mid = 0.5 * float(self.cfg["track_length_m"])
-        else:
-            mid = float(mid)
-        return abs(float(position_m) - mid) <= W
+        if float(position_m) < float(self._overlap_zone_left_m):
+            return False
+        # 未闭合前：保证切换区为单一连续区间（进入后不因快衰落抖动离开）
+        if not self._overlap_zone_closed:
+            return True
+        if self._overlap_zone_right_m is None:
+            return False
+        return float(position_m) <= float(self._overlap_zone_right_m)
     
     def _update_kpis(
         self,
@@ -811,10 +990,13 @@ class TrainHandoverEnv(gym.Env):
         """
         in_oz = self._in_handover_overlap_zone(position_m)
 
+        # R5 乒乓标志（每步重置，供奖励函数读取）
+        self._r5_pingpong_this_step = False
+
         # 1. 切换次数
         if ho_executed:
             self.episode_kpis["ho_count"] += 1
-            # 2. 乒乓检测：仅考虑“重叠区内”切换，且相邻两次切换方向相反（A->B->A / B->A->B）
+            # 2. 乒乓检测：仅考虑"重叠区内"切换，且相邻两次切换方向相反（A->B->A / B->A->B）
             if in_oz and old_serving_cell != new_serving_cell:
                 current_transition = (int(old_serving_cell), int(new_serving_cell))
                 prev_transition = self.last_overlap_ho_transition
@@ -822,6 +1004,7 @@ class TrainHandoverEnv(gym.Env):
                     # 上一次 from->to 与本次完全反向，即构成一次乒乓
                     if prev_transition[0] == current_transition[1] and prev_transition[1] == current_transition[0]:
                         self.episode_kpis["ping_pong_count"] += 1
+                        self._r5_pingpong_this_step = True
                         # 清空可避免连续序列被重复配对计数
                         self.last_overlap_ho_transition = None
                     else:
@@ -890,12 +1073,11 @@ class TrainHandoverEnv(gym.Env):
         # 6. 中断总时长
         kpis["interruption_total_time"] = self.episode_kpis["interruption_total_time"]
         
-        # 6.1 切换重叠区与区内通信中断率（断连时间 / 列车处于重叠区的时间）
+        # 6.1 动态切换区与区内通信中断率
         ozt = float(self.episode_kpis.get("overlap_zone_time", 0.0))
         kpis["overlap_zone_time_s"] = ozt
-        W = self._overlap_half_width_m()
-        kpis["overlap_zone_half_width_m"] = float(W)
-        kpis["overlap_zone_full_width_m"] = float(2.0 * W)
+        N = float(self.cfg.get("ho_overlap_delta_rsrp_db", 5.0))
+        kpis["overlap_zone_delta_rsrp_threshold_db"] = N
         int_in_oz = float(self.episode_kpis.get("interruption_time_in_overlap_zone", 0.0))
         kpis["interruption_time_in_overlap_zone_s"] = int_in_oz
         oz_sinr_time_sum = float(self.episode_kpis.get("overlap_zone_sinr_time_weighted_sum", 0.0))

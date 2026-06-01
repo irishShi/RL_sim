@@ -1,2 +1,39 @@
-./venv
-/checkpoints
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environments
+.venv/
+venv/
+
+# Local IDE / agent state
+.cursor/
+.claude/
+
+# Runtime outputs
+checkpoints/
+logs/
+plots/
+scenarios/
+
+# Experiments: keep optional notes/config manually if needed, ignore bulky generated runs by default.
+experiments/runs/*/checkpoints/
+experiments/runs/*/logs/
+experiments/runs/*/figures/episodes/
+*.pth
+
+# Large or generated data
+data/raw/
+data/processed/
+data/datasets/
+data/scenarios/
+data/real_data/
+
+# Temporary inbox
+_inbox/*
+!_inbox/README.md
+
+# Local OS noise
+.DS_Store
+Thumbs.db

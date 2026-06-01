@@ -17,27 +17,25 @@ class WeatherModel:
         self.temperature = None
         self.humidity = None
         self.pm25 = None
+        self._rng = np.random  # 默认使用全局 RNG，可通过 set_rng() 替换
+
+    def set_rng(self, rng):
+        """设置随机数生成器，避免污染全局 np.random 状态"""
+        self._rng = rng if rng is not None else np.random
     
-    def sample_weather(self, seed: int = None):
-        """
-        采样天气参数
-        
-        Args:
-            seed: 随机种子（如果为None，使用当前随机数生成器状态）
-        """
-        if seed is not None:
-            np.random.seed(seed)
-        
-        self.temperature = np.random.uniform(
-            self.cfg["T_min"], 
+    def sample_weather(self):
+        """采样天气参数（使用 self._rng，由 set_rng() 设置）"""
+        rng = self._rng
+        self.temperature = rng.uniform(
+            self.cfg["T_min"],
             self.cfg["T_max"]
         )
-        self.humidity = np.random.uniform(
-            self.cfg["H_min"], 
+        self.humidity = rng.uniform(
+            self.cfg["H_min"],
             self.cfg["H_max"]
         )
-        self.pm25 = np.random.uniform(
-            self.cfg["PM_min"], 
+        self.pm25 = rng.uniform(
+            self.cfg["PM_min"],
             self.cfg["PM_max"]
         )
     

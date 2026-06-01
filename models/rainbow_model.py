@@ -128,8 +128,10 @@ class SharedFeatureNet(nn.Module):
         super(SharedFeatureNet, self).__init__()
         self.net = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
             nn.ReLU(),
             nn.Linear(hidden_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
             nn.ReLU(),
         )
         self.output_dim = hidden_dim
@@ -152,8 +154,8 @@ class RainbowHead(nn.Module):
     输出每个动作的价值分布（C51）
     """
     
-    def __init__(self, feature_dim: int, num_actions: int, num_atoms: int = 51, 
-                 v_min: float = -60.0, v_max: float = 10.0, use_noisy: bool = True):
+    def __init__(self, feature_dim: int, num_actions: int, num_atoms: int = 51,
+                 v_min: float = -50.0, v_max: float = 80.0, use_noisy: bool = True):
         """
         Args:
             feature_dim: 共享特征维度
@@ -170,7 +172,10 @@ class RainbowHead(nn.Module):
         self.v_max = v_max
         self.delta_z = (v_max - v_min) / (num_atoms - 1)
         self.use_noisy = use_noisy
-        
+
+        # 缓存 support 向量，避免每次 get_q_values 重复创建
+        self.register_buffer('support', torch.linspace(v_min, v_max, num_atoms))
+
         # Value stream
         if use_noisy:
             self.value_fc = NoisyLinear(feature_dim, 256)
@@ -234,9 +239,7 @@ class RainbowHead(nn.Module):
         Returns:
             q_values: [B, num_actions] 期望 Q 值
         """
-        support = torch.linspace(self.v_min, self.v_max, self.num_atoms, 
-                                 device=dist.device)  # [num_atoms]
-        q_values = (dist * support.view(1, 1, -1)).sum(dim=-1)  # [B, num_actions]
+        q_values = (dist * self.support.view(1, 1, -1)).sum(dim=-1)  # [B, num_actions]
         return q_values
 
 
@@ -284,7 +287,7 @@ class RainbowWithForecast(nn.Module):
     
     def __init__(self, obs_dim: int, num_actions: int, n_steps: int = 15,
                  feature_hidden: int = 256, encoder_hidden: int = 128,
-                 num_atoms: int = 51, v_min: float = -60.0, v_max: float = 10.0,
+                 num_atoms: int = 51, v_min: float = -50.0, v_max: float = 80.0,
                  use_noisy: bool = True):
         """
         Args:

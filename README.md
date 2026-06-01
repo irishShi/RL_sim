@@ -1,171 +1,98 @@
-# 铁路切换算法环境 (Train Handover Environment)
+# RL_sim：高速铁路场景下的强化学习切换优化
 
-基于强化学习的铁路通信系统切换算法仿真环境。
+本项目用于研究高速铁路 5G/蜂窝网络场景中的切换参数优化问题。系统将列车沿一维轨道从小区 A 移动到小区 B 的过程建模为强化学习环境，使用 Rainbow DQN 学习自适应的切换迟滞 `Hys` 与触发时间 `TTT` 参数，以降低中断、过晚切换和不必要切换。
 
-## 项目结构
+当前仓库已经按“源码、数据、实验、结果、论文材料”重新整理。完整分类规则见 [docs/项目文件分类与整理规范.md](docs/项目文件分类与整理规范.md)。
 
-```
+## 目录结构
+
+```text
 RL_sim/
-├── envs/                        # 环境模块
-│   ├── __init__.py
-│   ├── train_ho_env.py         # 主环境：TrainHandoverEnv
-│   ├── channel_model.py        # 信道模型：路径损耗、阴影衰落、RSRP/SINR
-│   ├── weather_model.py        # 天气模型：采样与归一化
-│   └── ho_logic.py             # 切换逻辑：HO保护时间、outage判断
-├── configs/                     # 配置文件
-│   └── default_env_config.yaml # 默认环境参数
-├── run_env_test.py             # 测试脚本
-├── requirements.txt            # 依赖包
-└── README.md                   # 本文件
+├─ configs/                  # 环境、模型、训练配置
+├─ envs/                     # 仿真环境、信道模型、切换逻辑
+├─ models/                   # Rainbow 网络、动作空间、观测窗口
+├─ utils/                    # 经验回放、C51 投影、数据加载、场景生成
+├─ scripts/                  # 可执行脚本
+│  ├─ train/                 # 在线/离线训练
+│  ├─ eval/                  # 单场景与批量评估
+│  ├─ data/                  # 数据收集、真实轨迹处理
+│  └─ plot/                  # 绘图脚本
+├─ data/                     # 数据文件
+│  ├─ raw/                   # 原始数据
+│  ├─ processed/             # 清洗后的数据
+│  ├─ datasets/              # 离线训练数据集
+│  └─ scenarios/             # 固定随机种子的评估场景
+├─ experiments/runs/         # 每次实验的完整输出
+├─ results/                  # 精选结果，用于分析和论文
+├─ paper/                    # 论文正文、图表、参考文献和投稿材料
+├─ docs/                     # 技术文档、使用说明和历史文档
+└─ _inbox/                   # 临时收纳箱
 ```
-
-## 环境特性
-
-### 观测空间
-7维连续观测向量：
-- `RSRP_serv`: 服务小区RSRP（归一化）
-- `RSRP_neig`: 邻区RSRP（归一化）
-- `SINR_serv`: 服务小区SINR（归一化）
-- `pos_norm`: 位置归一化（0~1）
-- `T_norm`: 温度归一化（0~1）
-- `H_norm`: 湿度归一化（0~1）
-- `PM_norm`: PM2.5归一化（0~1）
-
-### 动作空间
-离散动作空间：
-- `0`: 不切换
-- `1`: 切换
-
-### 奖励函数
-- **正奖励**: SINR归一化值（鼓励高信号质量）
-- **负奖励**: 
-  - Outage惩罚：`-C_outage`（默认-10.0）
-  - 切换惩罚：`-C_ho`（默认-0.3）
-
-### 终止条件
-- 到达终点（`position >= track_length`）
-- 发生Outage（`SINR < sinr_outage_db`）
 
 ## 安装依赖
 
 ```bash
 pip install -r requirements.txt
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
 ```
 
-## 快速开始
+## 常用命令
 
-### 1. 基本使用
-
-```python
-from envs.train_ho_env import TrainHandoverEnv
-
-# 创建环境
-env = TrainHandoverEnv()
-
-# 重置环境
-obs, info = env.reset(seed=42)
-
-# 运行一个episode
-done = False
-while not done:
-    action = env.action_space.sample()  # 随机动作
-    obs, reward, terminated, truncated, info = env.step(action)
-    done = terminated or truncated
-```
-
-### 2. 使用配置文件
-
-```python
-env = TrainHandoverEnv(config_path="configs/default_env_config.yaml")
-```
-
-### 3. 自定义配置
-
-```python
-custom_config = {
-    "track_length_m": 5000.0,
-    "v_default_kmh": 250.0,
-    "C_outage": 15.0,
-}
-env = TrainHandoverEnv(config=custom_config)
-```
-
-### 4. 运行测试
+收集离线训练数据：
 
 ```bash
-python run_env_test.py
+python scripts/data/collect_data.py --num_episodes 100 --output_path data/datasets/offline_dataset.npz
 ```
 
-## 环境参数说明
+离线训练：
 
-主要配置参数（详见 `configs/default_env_config.yaml`）：
-
-- **轨道参数**: 轨道长度、时间步长
-- **速度参数**: 默认速度、速度范围
-- **发射功率**: 基站A/B的发射功率
-- **路径损耗**: 路径损耗指数、阴影衰落标准差
-- **天气参数**: 温度、湿度、PM2.5范围及影响系数
-- **L3滤波**: IIR滤波系数
-- **奖励参数**: Outage惩罚、切换惩罚
-- **切换保护**: 最小切换间隔时间
-
-## 模型说明
-
-### 路径损耗模型
-```
-PL(d) = PL0 + 10*n*log10(d/d0) + Shadowing + L_weather
+```bash
+python scripts/train/train_rainbow_offline.py --dataset_path data/datasets/offline_dataset.npz --use_cql
 ```
 
-### 天气影响
-额外路径损耗：
-```
-L_weather = a_T * |T - T0| + a_H * max(0, H - 70) + a_PM * PM2.5
-```
+在线训练：
 
-### L3滤波
-使用IIR滤波器平滑RSRP/SINR测量值：
-```
-filtered = alpha * last_value + (1 - alpha) * current_value
+```bash
+python scripts/train/train_rainbow.py
 ```
 
-## 与强化学习框架集成
+单场景评估：
 
-### Stable-Baselines3
-
-```python
-from stable_baselines3 import DQN
-from envs.train_ho_env import TrainHandoverEnv
-
-env = TrainHandoverEnv()
-model = DQN("MlpPolicy", env, verbose=1)
-model.learn(total_timesteps=100000)
+```bash
+python scripts/eval/test_simple.py
 ```
 
-### Ray RLlib
+批量评估：
 
-```python
-from ray import tune
-from envs.train_ho_env import TrainHandoverEnv
-
-tune.run(
-    "PPO",
-    config={
-        "env": TrainHandoverEnv,
-        "num_workers": 4,
-    }
-)
+```bash
+python scripts/eval/test_batch_comparison.py
 ```
 
-## 扩展功能
+真实轨迹预处理：
 
-可以在此基础上扩展：
-- 多小区场景（>2个基站）
-- 更复杂的信道模型（多径、多普勒效应）
-- 动态天气变化
-- 更精细的奖励函数（重叠区奖励、SINR增益奖励等）
-- 可视化渲染
+```bash
+python scripts/data/validate_gnb_trace.py --preprocess_only --save_csv
+```
 
-## 许可证
+真实轨迹绘图：
 
-本项目仅供研究使用。
+```bash
+python scripts/plot/plot_gnb_trace.py
+```
 
+## 输出约定
+
+新的训练和评估结果应写入 `experiments/runs/<run_id>/`。历史整理前的实验产物已经收纳到：
+
+```text
+experiments/runs/legacy_20260416_offline_rainbow/
+```
+
+论文最终使用的图表放入：
+
+```text
+paper/assets/figures/final/
+paper/assets/tables/final/
+```
+
+不要再把 PNG、JSON、checkpoint 或临时数据直接输出到项目根目录。

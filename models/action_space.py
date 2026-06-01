@@ -9,15 +9,15 @@ class ActionSpace:
     
     根据模型方案：
     - Hys_set = {1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5} (8个)
-    - TTT_set = {0, 40, 80, 160, 320, 640} (6个)
+    - TTT_set = {0, 50, 100, 150, 300, 650} (6个)
     - 总动作数 = 8 * 6 = 48
     """
     
     def __init__(self):
         # Hys 离散集合（dB）
         self.hys_set = np.array([1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0], dtype=np.float32)
-        # TTT 离散集合（ms）
-        self.ttt_set = np.array([0, 40, 80, 160, 320, 640], dtype=np.float32)
+        # TTT 离散集合（ms，已与环境50ms量化网格对齐）
+        self.ttt_set = np.array([0, 50, 100, 150, 300, 650], dtype=np.float32)
         
         self.num_hys = len(self.hys_set)
         self.num_ttt = len(self.ttt_set)
@@ -69,6 +69,6 @@ class ActionSpace:
         """归一化 Hys 到 [0, 1]"""
         return float(np.clip((hys - hys_min) / (hys_max - hys_min + 1e-8), 0.0, 1.0))
     
-    def normalize_ttt(self, ttt: float, ttt_min: float = 0.0, ttt_max: float = 640.0) -> float:
+    def normalize_ttt(self, ttt: float, ttt_min: float = 0.0, ttt_max: float = 650.0) -> float:
         """归一化 TTT 到 [0, 1]"""
         return float(np.clip((ttt - ttt_min) / (ttt_max - ttt_min + 1e-8), 0.0, 1.0))

@@ -36,23 +36,16 @@ def project_distribution(support: torch.Tensor, target_dist: torch.Tensor,
     l = b.floor().long().clamp(0, num_atoms - 1)  # [B, num_atoms]
     u = b.ceil().long().clamp(0, num_atoms - 1)   # [B, num_atoms]
     
-    # 初始化投影分布
+    # 向量化投影（scatter_add_ 替代 Python 双层循环）
     projected_dist = torch.zeros(B, num_atoms, device=support.device)
-    
-    # 分配概率质量
-    for i in range(B):
-        for j in range(num_atoms):
-            prob = target_dist[i, j]
-            l_val = l[i, j].item()
-            u_val = u[i, j].item()
-            b_val = b[i, j].item()
-            
-            if l_val == u_val:
-                projected_dist[i, l_val] += prob
-            else:
-                # 线性插值
-                projected_dist[i, l_val] += prob * (u_val - b_val)
-                projected_dist[i, u_val] += prob * (b_val - l_val)
+
+    # 上下界权重
+    u_weight = b - l.float()          # [B, num_atoms]  (b - floor(b))
+    l_weight = 1.0 - u_weight         # [B, num_atoms]  (ceil(b) - b)
+
+    # 将概率质量按权重分配到上下界原子
+    projected_dist.scatter_add_(1, l, target_dist * l_weight)
+    projected_dist.scatter_add_(1, u, target_dist * u_weight)
     
     # 归一化
     projected_dist = projected_dist / (projected_dist.sum(dim=1, keepdim=True) + 1e-8)

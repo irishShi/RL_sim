@@ -28,10 +28,15 @@ class ChannelModel:
         self._shadow_A_db = 0.0
         self._shadow_B_db = 0.0
         self._last_pos_m = None
-        
+        self._rng = np.random  # 默认使用全局 RNG，可通过 set_rng() 替换
+
         # 预生成的场景数据（如果使用）
         self._scenario_data = None
         self._use_scenario = False
+
+    def set_rng(self, rng):
+        """设置随机数生成器，避免污染全局 np.random 状态"""
+        self._rng = rng if rng is not None else np.random
     
     def reset(self, seed: Optional[int] = None, scenario_data: Optional[Dict] = None):
         """
@@ -80,8 +85,8 @@ class ChannelModel:
 
         if self._last_pos_m is None:
             # 首次：直接采样
-            self._shadow_A_db = np.random.normal(0.0, self.cfg["shadow_sigma_A"])
-            self._shadow_B_db = np.random.normal(0.0, self.cfg["shadow_sigma_B"])
+            self._shadow_A_db = self._rng.normal(0.0, self.cfg["shadow_sigma_A"])
+            self._shadow_B_db = self._rng.normal(0.0, self.cfg["shadow_sigma_B"])
             self._last_pos_m = x_m
             return
 
@@ -93,8 +98,8 @@ class ChannelModel:
         sigma_A = self.cfg["shadow_sigma_A"]
         sigma_B = self.cfg["shadow_sigma_B"]
 
-        w_A = np.random.normal(0.0, sigma_A)
-        w_B = np.random.normal(0.0, sigma_B)
+        w_A = self._rng.normal(0.0, sigma_A)
+        w_B = self._rng.normal(0.0, sigma_B)
 
         self._shadow_A_db = rho * self._shadow_A_db + np.sqrt(1.0 - rho ** 2) * w_A
         self._shadow_B_db = rho * self._shadow_B_db + np.sqrt(1.0 - rho ** 2) * w_B
@@ -148,14 +153,14 @@ class ChannelModel:
             k_factor_db = self.cfg.get("rician_k_factor_db", None)
             if k_factor_db is None:
                 # Rayleigh：CN(0,1)
-                h = (np.random.normal(0.0, 1.0) + 1j * np.random.normal(0.0, 1.0)) / np.sqrt(2.0)
+                h = (self._rng.normal(0.0, 1.0) + 1j * self._rng.normal(0.0, 1.0)) / np.sqrt(2.0)
             else:
                 # Rician：有 LOS 分量 + NLOS 分量的组合（简化实现）
                 K = 10 ** (k_factor_db / 10.0)
                 sigma2 = 1.0 / (2.0 * (K + 1.0))
                 h_los = np.sqrt(K / (K + 1.0))  # 实数 LOS 分量
-                h_nlos = (np.random.normal(0.0, np.sqrt(sigma2)) +
-                          1j * np.random.normal(0.0, np.sqrt(sigma2)))
+                h_nlos = (self._rng.normal(0.0, np.sqrt(sigma2)) +
+                          1j * self._rng.normal(0.0, np.sqrt(sigma2)))
                 h = h_los + h_nlos
 
             # 振幅平方对应功率增益，转换为 dB
