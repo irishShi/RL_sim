@@ -1,7 +1,6 @@
 """信道模型：路径损耗、阴影衰落、RSRP/SINR计算（含 3GPP TR 38.901 风格增强）"""
 import numpy as np
 from typing import Tuple, Dict, Optional
-from .weather_model import WeatherModel
 
 
 class ChannelModel:
@@ -13,16 +12,14 @@ class ChannelModel:
     - 可选的小尺度快衰落（Rayleigh / Rician）
     """
 
-    def __init__(self, config: Dict, weather_model: WeatherModel):
+    def __init__(self, config: Dict):
         """
         初始化信道模型
 
         Args:
             config: 配置字典
-            weather_model: 天气模型实例
         """
         self.cfg = config
-        self.weather_model = weather_model
 
         # 相关阴影衰落状态（按距离相关，而不是每步独立采样）
         self._shadow_A_db = 0.0
@@ -124,7 +121,6 @@ class ChannelModel:
         计算路径损耗（dB），包含：
         - 基础路径损耗（近似 38.901 大尺度路径损耗）
         - 距离相关的阴影衰落
-        - 天气引起的额外损耗
 
         Args:
             x_m: 沿轨道的位置（用于相关阴影衰落）
@@ -143,10 +139,7 @@ class ChannelModel:
         # 选择对应小区的阴影值
         shadow = self._shadow_A_db if is_cell_A else self._shadow_B_db
 
-        # 天气额外损耗
-        Lw = self.weather_model.compute_weather_loss_db()
-
-        pl_total = pl_mean + shadow + Lw
+        pl_total = pl_mean + shadow
 
         # 小尺度快衰落（可选，类似 38.901 的多径快衰落的功率波动，简化为 Rayleigh/Rician 振幅）
         if self.cfg.get("enable_fast_fading", False):
@@ -194,7 +187,7 @@ class ChannelModel:
         d_A = max(x_m - 0.0, 1.0)
         d_B = max(D - x_m, 1.0)
 
-        # 1) 路径损耗（包含阴影 + 天气 + 可选快衰落）
+        # 1) 路径损耗（包含阴影 + 可选快衰落）
         pl_A = self.pathloss_db(x_m, d_A, is_cell_A=True)
         pl_B = self.pathloss_db(x_m, d_B, is_cell_A=False)
 
@@ -260,4 +253,3 @@ class ChannelModel:
         sinr_B_db = linear_to_db(sinr_B)
 
         return rsrp_A, rsrp_B, sinr_A_db, sinr_B_db
-

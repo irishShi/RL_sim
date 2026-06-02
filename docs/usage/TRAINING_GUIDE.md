@@ -40,7 +40,7 @@ class HandoverWrapper:
         self.env = env
         self.action_space = action_space
         self.current_hys = 3.0  # 当前生效的 Hys
-        self.current_ttt = 160.0  # 当前生效的 TTT
+        self.current_ttt = 150.0  # 当前生效的 TTT
         self.ttt_timer = 0.0  # TTT 计时器
         self.a3_condition_met = False  # A3 事件条件是否满足
     
@@ -109,7 +109,7 @@ class HandoverWrapper:
 ```python
 from models import ObservationWindow
 
-obs_window = ObservationWindow(window_size=15, obs_dim=10)
+obs_window = ObservationWindow(window_size=15, obs_dim=7)
 
 # 在环境 reset 后
 obs_window.reset()
@@ -128,11 +128,11 @@ obs_window.update_time(env.time_step * env.cfg['delta_t_s'])
 if info.get('ho_executed', False):
     obs_window.update_ho_time(env.time_step * env.cfg['delta_t_s'])
 
-# 如果参数改变，更新参数
+# 如果参数改变，更新参数（仅用于记录和兼容接口，不进入当前策略输入）
 obs_window.update_params(info['current_hys'], info['current_ttt'])
 
 # 获取完整窗口用于模型输入
-window = obs_window.get_window()  # [15, 10]
+window = obs_window.get_window()  # [15, 7]
 ```
 
 ### 2.3 下一步 ΔRSRP 真值计算

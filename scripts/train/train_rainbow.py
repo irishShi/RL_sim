@@ -21,7 +21,7 @@ if PROJECT_ROOT not in sys.path:
 
 from envs.train_ho_env import TrainHandoverEnv
 from models import RainbowWithForecast, ActionSpace, ObservationWindow
-from utils import ReplayBuffer, NStepBuffer, project_distribution
+from utils import ActionHoldController, ReplayBuffer, NStepBuffer, project_distribution
 
 
 def normalize_delta_rsrp(delta_rsrp_dbm: float, delta_min: float = -30.0, delta_max: float = 30.0) -> float:
@@ -297,15 +297,18 @@ def main():
         prev_action = None
         prev_reward = None
         prev_done = None
+        hold_controller = ActionHoldController(action_space, env.cfg['delta_t_s'])
         
         while not done:
             # 获取当前窗口
             window = obs_window.get_window()
-            # 直接在 GPU 上创建 tensor，减少数据传输
-            window_tensor = torch.from_numpy(window).float().unsqueeze(0).to(device)
-            
-            # 选择动作（NoisyNet 自动探索，不需要 epsilon-greedy）
-            action = online_net.act(window_tensor, epsilon=0.0)
+
+            def select_model_action():
+                window_tensor = torch.from_numpy(window).float().unsqueeze(0).to(device)
+                return online_net.act(window_tensor, epsilon=0.0)
+
+            # Hys/TTT 动作保持：仅在 hold 耗尽时重新决策
+            action = hold_controller.select(select_model_action)
             
             # 执行动作
             next_obs_raw, reward, terminated, truncated, info = env.step(action)
@@ -322,7 +325,7 @@ def main():
             
             obs_window.update_params(
                 info.get('current_hys', 3.0),
-                info.get('current_ttt', 160.0)
+                info.get('current_ttt', 150.0)
             )
             
             next_obs_extended = obs_window.build_observation(

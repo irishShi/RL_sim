@@ -36,6 +36,14 @@ pip install -r requirements.txt
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
 ```
 
+## 兼容性提示
+
+当前环境已移除天气损耗、温度观测特征以及策略输入中的当前 Hys/TTT 特征，模型输入由 `[15, 10]` 调整为 `[15, 7]`。整理前的历史数据集、legacy checkpoint 以及旧 9 特征版本 checkpoint 仍保留在归档目录中，但不能直接用于当前代码；继续实验前需要重新采集离线数据并重新训练模型。
+
+## Action Hold 规则
+
+数据采集、在线训练、评估和真实轨迹验证统一使用自适应 action hold：智能体选定 `(Hys, TTT)` 后会保持若干步，默认保持步数为 `max(6, ceil(TTT / delta_t) + 2)`，并限制在 20 步以内。这样可以让 TTT 计时器完整生效，避免每步重选参数导致切换逻辑被反复重置。
+
 ## 常用命令
 
 收集离线训练数据：

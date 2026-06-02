@@ -18,7 +18,7 @@ class HandoverLogic:
         
         # A3 事件和 TTT 相关状态
         self.current_hys = 3.0  # 当前 Hys 参数（dB）
-        self.current_ttt = 160.0  # 当前 TTT 参数（ms）
+        self.current_ttt = 150.0  # 当前 TTT 参数（ms）
         self.ttt_timer = 0.0  # TTT 计时器（秒）
         self.a3_condition_met = False  # A3 事件条件是否满足
         # 最近一步的切换触发/阻塞状态（用于统计切换成功率）
@@ -182,7 +182,7 @@ class HandoverLogic:
         self.last_ho_time = -1e9
         self.last_ho_position = None
         self.current_hys = 3.0
-        self.current_ttt = 160.0
+        self.current_ttt = 150.0
         self.ttt_timer = 0.0
         self.a3_condition_met = False
         self.last_ho_triggered = False
@@ -191,4 +191,3 @@ class HandoverLogic:
     def get_current_params(self) -> Tuple[float, float]:
         """获取当前 Hys 和 TTT 参数"""
         return self.current_hys, self.current_ttt
-

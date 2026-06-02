@@ -6,7 +6,6 @@
 """
 import os
 import sys
-import math
 import numpy as np
 import yaml
 from typing import Dict, List, Optional
@@ -19,7 +18,7 @@ if PROJECT_ROOT not in sys.path:
 
 from envs.train_ho_env import TrainHandoverEnv
 from models import ActionSpace, ObservationWindow
-from utils import NStepBuffer
+from utils import ActionHoldController, NStepBuffer
 
 
 def normalize_delta_rsrp(delta_rsrp_dbm: float, delta_min: float = -30.0, delta_max: float = 30.0) -> float:
@@ -69,6 +68,7 @@ class DataCollector:
         ]
         # 构建分层采样概率（用于 stratified 策略）
         self._stratified_probs = self._build_stratified_probs()
+        self._low_ho_stratified_probs = self._build_low_ho_stratified_probs()
 
     def _build_stratified_probs(self) -> np.ndarray:
         """
@@ -103,27 +103,31 @@ class DataCollector:
         probs /= probs.sum()
         return probs
 
-    def _compute_hold_steps(self, action: int, min_k: int = 6, max_k: int = 20) -> int:
+    def _build_low_ho_stratified_probs(self) -> np.ndarray:
         """
-        根据动作的 TTT 值自适应计算动作保持步数。
+        构建偏低切换次数的分层采样分布。
 
-        保持步数需要 >= TTT 所需的步数 + 2（留余量让 TTT 计时器能累积到阈值），
-        否则频繁切换动作会不断重置 ho_logic 的 TTT 计时器，导致切换永远无法触发。
-
-        Args:
-            action: 动作索引
-            min_k: 最小保持步数（默认6步=300ms）
-            max_k: 最大保持步数（默认20步=1000ms）
-
-        Returns:
-            保持步数
+        与 stratified 相比，它更偏向较大 Hys 和较长 TTT，贴近当前全局固定A3基线的
+        低切换特性；同时保留短TTT/低Hys覆盖，避免离线数据只剩保守动作。
         """
-        if self.action_hold_steps > 0:
-            return self.action_hold_steps
-        _, ttt = self.action_space.action_to_hys_ttt(action)
-        dt_ms = self.env.cfg['delta_t_s'] * 1000  # 50ms
-        ttt_steps = int(math.ceil(ttt / dt_ms))  # TTT 需要的步数
-        return min(max(min_k, ttt_steps + 2), max_k)
+        hys_weights = {
+            1.5: 0.35, 2.0: 0.55, 2.5: 0.8, 3.0: 1.0,
+            3.5: 1.2, 4.0: 1.5, 4.5: 1.8, 5.0: 2.1,
+        }
+        ttt_weights = {
+            0: 0.20, 50: 0.35, 100: 0.6, 150: 0.9,
+            300: 1.4, 650: 2.0,
+        }
+        floor = 0.08
+
+        probs = np.zeros(self.action_space.num_actions)
+        for a_idx in range(self.action_space.num_actions):
+            hys, ttt = self.action_space.action_to_hys_ttt(a_idx)
+            w_hys = hys_weights.get(float(hys), 1.0)
+            w_ttt = ttt_weights.get(int(ttt), 1.0)
+            probs[a_idx] = w_hys * w_ttt + floor
+        probs /= probs.sum()
+        return probs
 
     def _apply_reward_phase_for_episode(self, episode_idx: int, num_episodes: int):
         """
@@ -201,19 +205,20 @@ class DataCollector:
         experiences = []
         done = False
         step = 0
-        hold_remaining = 0  # 当前动作剩余保持步数
-        current_action = None
+        hold_controller = ActionHoldController(
+            self.action_space,
+            self.env.cfg['delta_t_s'],
+            fixed_hold_steps=self.action_hold_steps,
+        )
 
         while not done:
             # 获取当前窗口
             window = self.obs_window.get_window()
 
             # 动作持续性：仅在 hold 耗尽时选择新动作
-            if hold_remaining <= 0:
-                current_action = self._select_action(policy_type, epsilon, window)
-                hold_remaining = self._compute_hold_steps(current_action)
-            action = current_action
-            hold_remaining -= 1
+            action = hold_controller.select(
+                lambda: self._select_action(policy_type, epsilon, window)
+            )
 
             # 执行动作
             next_obs_raw, reward, terminated, truncated, info = self.env.step(action)
@@ -228,7 +233,7 @@ class DataCollector:
             
             self.obs_window.update_params(
                 info.get('current_hys', 3.0),
-                info.get('current_ttt', 160.0)
+                info.get('current_ttt', 150.0)
             )
             
             next_obs_extended = self.obs_window.build_observation(
@@ -286,9 +291,9 @@ class DataCollector:
         
         elif policy_type == 'fixed':
             # 固定策略：使用固定的 Hys/TTT
-            # 例如：Hys=3.0, TTT=160
+            # 例如：Hys=3.0, TTT=150
             hys = 3.0
-            ttt = 160.0
+            ttt = 150.0
             return self.action_space.hys_ttt_to_action(hys, ttt)
         
         elif policy_type == 'uniform_mix':
@@ -310,6 +315,10 @@ class DataCollector:
             # 分层采样：基于 (Hys, TTT) 工程合理性的加权分布
             # 核心参数区间高概率，极端参数低概率但有覆盖，避免动作空间塌缩
             return np.random.choice(num_actions, p=self._stratified_probs)
+
+        elif policy_type == 'low_ho_stratified':
+            # 低切换分层采样：更多覆盖大Hys/长TTT，但保留全动作空间探索
+            return np.random.choice(num_actions, p=self._low_ho_stratified_probs)
 
         else:
             raise ValueError(f"未知的策略类型: {policy_type}")
@@ -398,7 +407,10 @@ def main():
     parser = argparse.ArgumentParser(description='数据收集脚本')
     parser.add_argument('--num_episodes', type=int, default=500, help='收集的episode数量')
     parser.add_argument('--policy_type', type=str, default='stratified',
-                       choices=['random', 'epsilon_greedy', 'fixed', 'uniform_mix', 'expert_mix', 'stratified'],
+                       choices=[
+                           'random', 'epsilon_greedy', 'fixed', 'uniform_mix',
+                           'expert_mix', 'stratified', 'low_ho_stratified'
+                       ],
                        help='收集策略类型')
     parser.add_argument('--epsilon', type=float, default=1.0, help='Epsilon值（用于epsilon_greedy）')
     parser.add_argument('--output_path', type=str, default='data/datasets/offline_dataset.npz',

@@ -7,6 +7,7 @@
 3. 对每个场景运行所有策略（包括RL策略）
 4. 收集性能指标并生成对比图表
 """
+import argparse
 import os
 import sys
 import json
@@ -25,11 +26,15 @@ if PROJECT_ROOT not in sys.path:
 from envs.train_ho_env import TrainHandoverEnv
 from models import RainbowWithForecast, ActionSpace, ObservationWindow
 from utils.scenario_generator import ScenarioGenerator
-from test_simple import TraditionalA3Policy, run_episode
+from test_simple import TraditionalA3Policy, resolve_checkpoint_path, run_episode
 
 # 配置 matplotlib 支持中文显示
 plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'DejaVu Sans']
 plt.rcParams['axes.unicode_minus'] = False
+
+RL_POLICY_NAME = "RL策略 (Rainbow DQN)"
+GLOBAL_ORACLE_A3_NAME = "全局最优A3 (逐场景Oracle)"
+FIXED_A3_REFERENCE_NAME = "固定A3参考 (全场景同参)"
 
 
 def _extract_handover_points(trajectory: list):
@@ -224,13 +229,32 @@ def collect_kpis(trajectory: list, kpis: dict = None) -> dict:
     return result
 
 
+def summarize_policy_results(results_by_policy: dict) -> dict:
+    """按策略汇总KPI均值、标准差、最小值和最大值。"""
+    stats = {}
+    for policy_name, policy_results in results_by_policy.items():
+        if not policy_results:
+            continue
+
+        stats[policy_name] = {}
+        for kpi_name in policy_results[0].keys():
+            values = [r[kpi_name] for r in policy_results]
+            stats[policy_name][f"{kpi_name}_mean"] = np.mean(values)
+            stats[policy_name][f"{kpi_name}_std"] = np.std(values)
+            stats[policy_name][f"{kpi_name}_min"] = np.min(values)
+            stats[policy_name][f"{kpi_name}_max"] = np.max(values)
+    return stats
+
+
 def run_batch_test(num_scenarios: int = 100,
                    a3_configs: list = None,
                    base_seed: int = 10000,
                    device: str = 'cpu',
                    top_k_a3: int = 5,
                    oracle_use_full_grid: bool = True,
-                   oracle_ho_penalty_weight: float = 0.5):
+                   oracle_ho_penalty_weight: float = 0.5,
+                   checkpoint_path: str = None,
+                   run_dir: str = None):
     """
     运行批量测试
 
@@ -243,6 +267,8 @@ def run_batch_test(num_scenarios: int = 100,
         top_k_a3: 从RL动作分布中选择的Top-K A3策略数量
         oracle_use_full_grid: Oracle是否在全部候选中选优
         oracle_ho_penalty_weight: Oracle评分中的切换惩罚权重
+        checkpoint_path: 待评估模型路径
+        run_dir: 输出目录
 
     Returns:
         测试结果字典
@@ -266,24 +292,16 @@ def run_batch_test(num_scenarios: int = 100,
     with open(model_config_path, 'r', encoding='utf-8') as f:
         model_config = yaml.safe_load(f)
     
-    # 2. 加载RL模型（优先使用离线训练 best checkpoint）
-    checkpoints_dir = os.path.join(base_dir, "experiments", "runs", "legacy_20260416_offline_rainbow", "checkpoints")
-    best_ckpt_path = os.path.join(checkpoints_dir, "rainbow_offline_best.pth")
-    fallback_ckpt_path = os.path.join(checkpoints_dir, "rainbow_offline_final.pth")
-
-    checkpoint_path = best_ckpt_path if os.path.exists(best_ckpt_path) else fallback_ckpt_path
+    # 2. 加载RL模型
+    checkpoint_path = resolve_checkpoint_path(base_dir, checkpoint_path)
 
     if not os.path.exists(checkpoint_path):
         print(f"\n错误：未找到离线训练模型！")
-        print(f"期望路径：{best_ckpt_path}")
-        print(f"或回退路径：{fallback_ckpt_path}")
+        print(f"查找路径：{checkpoint_path}")
         print(f"请先运行 train_rainbow_offline.py 生成 checkpoint")
         return None
 
-    if checkpoint_path == fallback_ckpt_path:
-        print(f"\n警告：未找到 best checkpoint，回退加载: {checkpoint_path}")
-    else:
-        print(f"\n加载离线训练 best 模型: {checkpoint_path}")
+    print(f"\n加载离线训练模型: {checkpoint_path}")
 
     checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
     
@@ -309,7 +327,14 @@ def run_batch_test(num_scenarios: int = 100,
         use_noisy=use_noisy
     ).to(device)
     
-    model.load_state_dict(checkpoint['online_net_state_dict'])
+    try:
+        model.load_state_dict(checkpoint['online_net_state_dict'])
+    except RuntimeError as exc:
+        raise RuntimeError(
+            "Checkpoint 与当前模型输入维度不兼容。当前版本已移除天气/温度特征，"
+            "并从策略输入中移除当前 Hys/TTT，obs_dim 已调整为 7；"
+            "需要重新采集离线数据并重新训练模型。"
+        ) from exc
     model.eval()
     print("模型加载成功！")
     
@@ -335,12 +360,15 @@ def run_batch_test(num_scenarios: int = 100,
         scenarios.append(scenario_data)
     
     # 6. 第一阶段：仅运行RL，统计动作分布并收集RL KPI
-    all_results = {"RL策略 (Rainbow DQN)": []}
+    all_results = {RL_POLICY_NAME: []}
     rl_action_counter = Counter()
     rl_total_steps = 0
     rl_trajectories = []
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_dir = os.path.join(base_dir, "experiments", "runs", f"{timestamp}_batch_comparison")
+    if run_dir:
+        run_dir = run_dir if os.path.isabs(run_dir) else os.path.join(base_dir, run_dir)
+    else:
+        run_dir = os.path.join(base_dir, "experiments", "runs", f"{timestamp}_batch_comparison")
     scenario_plot_dir = os.path.join(
         run_dir, "figures", "episodes"
     )
@@ -352,7 +380,7 @@ def run_batch_test(num_scenarios: int = 100,
         env_rl = TrainHandoverEnv(config_path=env_config_path)
         obs_window.reset()
         traj_rl = run_episode(
-            env_rl, None, "RL策略 (Rainbow DQN)",
+            env_rl, None, RL_POLICY_NAME,
             obs_window=obs_window, model=model, device=device,
             seed=None, scenario_data=scenario_data
         )
@@ -367,12 +395,12 @@ def run_batch_test(num_scenarios: int = 100,
 
         # 收集RL KPI
         kpis_rl = collect_kpis(traj_rl['trajectory'], kpis_from_env_rl)
-        all_results["RL策略 (Rainbow DQN)"].append(kpis_rl)
+        all_results[RL_POLICY_NAME].append(kpis_rl)
 
         # 统计RL动作分布（映射回离散动作集合）
         for p in traj_rl['trajectory']:
             h = float(p.get("current_hys", 3.0))
-            t = float(p.get("current_ttt", 160.0))
+            t = float(p.get("current_ttt", 150.0))
             a = action_space.hys_ttt_to_action(h, t)
             h_c, t_c = action_space.action_to_hys_ttt(a)
             rl_action_counter[(float(h_c), float(t_c))] += 1
@@ -393,21 +421,23 @@ def run_batch_test(num_scenarios: int = 100,
             a3_configs.append((float(h), float(t), name))
             print(f"  {name}: count={cnt}, ratio={ratio:.4f}")
     print(
-        f"Oracle候选集: {'全48组' if oracle_use_full_grid else 'Top-K子集'} "
+        f"全局最优A3候选集: {'全48组' if oracle_use_full_grid else 'Top-K子集'} "
         f"| ho惩罚权重={oracle_ho_penalty_weight}"
     )
 
     # 初始化A3结果存储
+    fixed_a3_configs = oracle_candidate_configs if oracle_use_full_grid else list(a3_configs)
+    fixed_a3_results = {name: [] for _, _, name in fixed_a3_configs}
     for _, _, name in a3_configs:
         all_results[name] = []
-    all_results["Oracle A3 (per-scenario best)"] = []
+    all_results[GLOBAL_ORACLE_A3_NAME] = []
     oracle_selection_records = []
 
     # 8. 第二阶段：运行Top-K A3策略 + Oracle候选
     print(f"\n第二阶段：运行测试（{num_scenarios}个场景 × {len(a3_configs)}个A3策略）...")
     for scenario_idx, scenario_data in enumerate(tqdm(scenarios, desc="A3测试进度"), start=1):
         scenario_trajectories = {
-            "RL策略 (Rainbow DQN)": rl_trajectories[scenario_idx - 1] if scenario_idx - 1 < len(rl_trajectories) else []
+            RL_POLICY_NAME: rl_trajectories[scenario_idx - 1] if scenario_idx - 1 < len(rl_trajectories) else []
         }
         per_scenario_oracle_kpis = {}
         per_scenario_trajs = {}
@@ -431,6 +461,8 @@ def run_batch_test(num_scenarios: int = 100,
                     kpis_from_env = last_info['kpis']
             kpis = collect_kpis(traj['trajectory'], kpis_from_env)
             all_results[name].append(kpis)
+            if name in fixed_a3_results:
+                fixed_a3_results[name].append(kpis)
             per_scenario_oracle_kpis[name] = kpis
             per_scenario_trajs[name] = traj['trajectory']
             scenario_trajectories[name] = traj['trajectory']
@@ -454,11 +486,16 @@ def run_batch_test(num_scenarios: int = 100,
                     last_info_oracle = traj_oracle.get('last_info', {})
                     if 'kpis' in last_info_oracle:
                         kpis_from_env_oracle = last_info_oracle['kpis']
-                per_scenario_oracle_kpis[name] = collect_kpis(traj_oracle['trajectory'], kpis_from_env_oracle)
-                # 关键：保存Oracle候选的轨迹，便于场景级绘图时把“Oracle A3 (per-scenario best)”也画出来
+                kpis_oracle = collect_kpis(traj_oracle['trajectory'], kpis_from_env_oracle)
+                per_scenario_oracle_kpis[name] = kpis_oracle
+                if name in fixed_a3_results:
+                    fixed_a3_results[name].append(kpis_oracle)
+                # 关键：保存Oracle候选的轨迹，便于场景级绘图时把逐场景最优A3也画出来
                 per_scenario_trajs[name] = traj_oracle['trajectory']
 
-        # 场景级Oracle：每个场景单独选择最优A3参数
+        # 全局最优A3（逐场景Oracle）：
+        # 对每个场景单独枚举候选A3组合，并利用该场景完整结果选择自己的最优参数。
+        # 这不是跨场景共用同一个固定解，而是“上帝视角”的逐场景选优基线。
         oracle_cfgs_for_selection = oracle_candidate_configs if oracle_use_full_grid else a3_configs
         if per_scenario_oracle_kpis:
             scenario_best = select_best_a3_for_single_scenario(
@@ -468,15 +505,16 @@ def run_batch_test(num_scenarios: int = 100,
             )
             if scenario_best is not None:
                 best_name, best_kpis, best_hys, best_ttt = scenario_best
-                all_results["Oracle A3 (per-scenario best)"].append(best_kpis)
+                all_results[GLOBAL_ORACLE_A3_NAME].append(best_kpis)
                 oracle_selection_records.append({
+                    "scenario_idx": int(scenario_idx),
                     "policy_name": best_name,
                     "hys_db": float(best_hys),
                     "ttt_ms": float(best_ttt),
                 })
                 if best_name in per_scenario_trajs:
                     # 仅用于场景图展示：把Oracle选中的参数也标注出来（每个场景可能不同）
-                    oracle_plot_name = f"Oracle A3 (Hys={best_hys:.1f}dB, TTT={best_ttt:.0f}ms)"
+                    oracle_plot_name = f"全局最优A3 (Hys={best_hys:.1f}dB, TTT={best_ttt:.0f}ms)"
                     scenario_trajectories[oracle_plot_name] = per_scenario_trajs[best_name]
 
         # 每个场景输出1张图：双基站RSRP曲线 + 各策略切换点
@@ -490,23 +528,15 @@ def run_batch_test(num_scenarios: int = 100,
     
     # 8. 计算统计结果
     print("\n计算统计结果...")
-    stats = {}
-    for policy_name, results in all_results.items():
-        if not results:
-            continue
-        
-        # 计算平均值和标准差
-        stats[policy_name] = {}
-        for kpi_name in results[0].keys():
-            values = [r[kpi_name] for r in results]
-            stats[policy_name][f"{kpi_name}_mean"] = np.mean(values)
-            stats[policy_name][f"{kpi_name}_std"] = np.std(values)
-            stats[policy_name][f"{kpi_name}_min"] = np.min(values)
-            stats[policy_name][f"{kpi_name}_max"] = np.max(values)
+    stats = summarize_policy_results(all_results)
+    fixed_a3_stats = summarize_policy_results(fixed_a3_results)
     
     return {
         'all_results': all_results,
         'stats': stats,
+        'fixed_a3_results': fixed_a3_results,
+        'fixed_a3_stats': fixed_a3_stats,
+        'fixed_a3_configs': fixed_a3_configs,
         'num_scenarios': num_scenarios,
         'a3_configs': a3_configs,
         'rl_action_distribution_topk': [
@@ -519,8 +549,11 @@ def run_batch_test(num_scenarios: int = 100,
             for (h, t), c in rl_action_counter.most_common(max(1, int(top_k_a3)))
         ],
         'oracle_selection_records': oracle_selection_records,
+        'global_oracle_policy_name': GLOBAL_ORACLE_A3_NAME,
+        'fixed_a3_reference_name': FIXED_A3_REFERENCE_NAME,
         'oracle_use_full_grid': bool(oracle_use_full_grid),
         'oracle_ho_penalty_weight': float(oracle_ho_penalty_weight),
+        'checkpoint_path': os.path.abspath(checkpoint_path),
         'run_dir': run_dir,
     }
 
@@ -554,8 +587,10 @@ def select_best_a3_lexicographic(stats: dict, a3_configs: list, eps: float = 1e-
             "hys_db": float(hys),
             "ttt_ms": float(ttt),
             "ho_count_mean": float(s.get("ho_count_mean", 0.0)),
+            "ho_success_rate_mean": float(s.get("ho_success_rate_mean", 0.0)),
             "overlap_zone_sinr_mean_db_mean": float(s.get("overlap_zone_sinr_mean_db_mean", 0.0)),
             "outage_time_ratio_mean": float(s.get("outage_time_ratio_mean", 0.0)),
+            "ping_pong_ratio_mean": float(s.get("ping_pong_ratio_mean", 0.0)),
             "sinr_mean_db_mean": float(s.get("sinr_mean_db_mean", 0.0)),
             "comm_interruption_ratio_in_overlap_zone_mean": float(
                 s.get("comm_interruption_ratio_in_overlap_zone_mean", 0.0)
@@ -593,7 +628,10 @@ def select_best_a3_for_single_scenario(
     ho_penalty_weight: float = 0.5,
 ):
     """
-    在单个场景内选择最优A3（含切换次数惩罚）：
+    在单个场景内选择最优A3（逐场景Oracle）：
+    对同一个预生成场景枚举候选A3组合，利用完整场景结果为该场景单独选优。
+    因此不同场景可以选择不同的 (Hys, TTT)，不是全场景共享同一组固定参数。
+
     score = overlap_zone_sinr_mean_db - ho_penalty_weight * ho_count - 10 * outage_time_ratio
     再以 (更小ho_count, 更小outage) 做稳定tie-break。
     """
@@ -623,12 +661,14 @@ def select_best_a3_for_single_scenario(
     return candidates[0]
 
 
-def save_best_a3_result(output_path: str, selection: dict, num_scenarios: int):
-    """保存最优 A3 参数结果到 JSON 文件。"""
+def save_fixed_a3_reference_result(output_path: str, selection: dict, num_scenarios: int):
+    """保存全场景同一组固定A3参数的参考结果。"""
     if not selection:
         return
     
     payload = {
+        "policy_name": FIXED_A3_REFERENCE_NAME,
+        "meaning": "在所有测试场景上共用同一组固定A3参数，并按跨场景平均KPI做词典序排序；该结果只是传统固定参数参考，不代表逐场景全局最优。",
         "selection_rule": [
             "minimize ho_count_mean",
             "maximize overlap_zone_sinr_mean_db_mean",
@@ -642,8 +682,30 @@ def save_best_a3_result(output_path: str, selection: dict, num_scenarios: int):
         json.dump(payload, f, indent=2, ensure_ascii=False)
 
 
+def save_fixed_a3_grid_result(output_path: str, selection: dict, num_scenarios: int):
+    """保存完整固定A3网格的词典序排名结果。"""
+    if not selection:
+        return
+
+    payload = {
+        "policy_name": "固定A3全网格排名",
+        "meaning": "每一行都是一组在所有场景上保持不变的固定A3参数，用于传统基线敏感性分析。",
+        "selection_rule": [
+            "minimize ho_count_mean",
+            "maximize overlap_zone_sinr_mean_db_mean",
+            "minimize outage_time_ratio_mean as tie-break",
+        ],
+        "num_scenarios": int(num_scenarios),
+        "num_candidates": int(len(selection.get("ranking", []))),
+        "best": selection["best"],
+        "ranking": selection["ranking"],
+    }
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2, ensure_ascii=False)
+
+
 def save_oracle_a3_result(output_path: str, results: dict):
-    """保存场景级Oracle A3选择分布与汇总KPI。"""
+    """保存逐场景全局最优A3选择分布与汇总KPI。"""
     records = results.get("oracle_selection_records", [])
     if not records:
         return
@@ -658,7 +720,7 @@ def save_oracle_a3_result(output_path: str, results: dict):
             "count": int(c),
             "ratio": float(c / total),
         })
-    oracle_stats_raw = results.get("stats", {}).get("Oracle A3 (per-scenario best)", {})
+    oracle_stats_raw = results.get("stats", {}).get(GLOBAL_ORACLE_A3_NAME, {})
     oracle_stats = {}
     for k, v in oracle_stats_raw.items():
         if isinstance(v, (np.floating, float)):
@@ -667,15 +729,25 @@ def save_oracle_a3_result(output_path: str, results: dict):
             oracle_stats[k] = int(v)
         else:
             oracle_stats[k] = v
+    candidate_configs = results.get("fixed_a3_configs") if results.get("oracle_use_full_grid", True) else results.get("a3_configs")
+    candidate_configs = candidate_configs or []
     payload = {
+        "policy_name": GLOBAL_ORACLE_A3_NAME,
+        "meaning": "逐场景上帝视角：每个场景都基于该场景完整信号/结果枚举候选A3组合并单独选择最优解，不要求所有场景共用同一组参数。",
         "selection_rule": [
+            "for each scenario, evaluate every candidate A3 config on the same pre-generated scenario",
             "per-scenario maximize score",
             "score = overlap_zone_sinr_mean_db - ho_penalty_weight * ho_count - 10 * outage_time_ratio",
             "tie-break: lower ho_count, then lower outage_time_ratio",
         ],
         "num_scenarios": int(results.get("num_scenarios", total)),
+        "num_candidates_per_scenario": int(len(candidate_configs)),
         "oracle_use_full_grid": bool(results.get("oracle_use_full_grid", True)),
         "oracle_ho_penalty_weight": float(results.get("oracle_ho_penalty_weight", 0.5)),
+        "global_optimal_summary_kpis": oracle_stats,
+        "global_optimal_selection_distribution": distribution,
+        "scenario_selections": records,
+        # 兼容旧字段名
         "oracle_summary_kpis": oracle_stats,
         "oracle_selection_distribution": distribution,
     }
@@ -742,10 +814,12 @@ def plot_comparison(results: dict, output_dir: str = "."):
         bars = ax.bar(x_pos, means, width, yerr=stds, capsize=5, 
                      alpha=0.7, edgecolor='black', linewidth=1)
         
-        # 设置颜色（RL策略用不同颜色）
+        # 设置颜色（RL、逐场景全局最优、普通A3分开）
         for i, (bar, policy_name) in enumerate(zip(bars, policy_names)):
             if "RL" in policy_name:
                 bar.set_color('red')
+            elif policy_name == GLOBAL_ORACLE_A3_NAME:
+                bar.set_color('seagreen')
             else:
                 bar.set_color('steelblue')
         
@@ -793,6 +867,8 @@ def plot_comparison(results: dict, output_dir: str = "."):
             for i, patch in enumerate(bp['boxes']):
                 if "RL" in labels[i]:
                     patch.set_facecolor('lightcoral')
+                elif labels[i] == GLOBAL_ORACLE_A3_NAME:
+                    patch.set_facecolor('lightgreen')
                 else:
                     patch.set_facecolor('lightblue')
                 patch.set_alpha(0.7)
@@ -814,7 +890,7 @@ def plot_comparison(results: dict, output_dir: str = "."):
     plt.close()
 
 
-def print_summary(results: dict, best_a3: dict = None):
+def print_summary(results: dict, fixed_a3_reference: dict = None):
     """
     打印统计摘要
     
@@ -851,32 +927,32 @@ def print_summary(results: dict, best_a3: dict = None):
             f"{outage_ratio:<12.4f} {ping_pong:<8.4f} {overlap_sinr:<12.3f} {int_in_oz:<12.4f}"
         )
     
-    # 额外输出词典序选中的 Best A3，便于和全表对照
-    if best_a3:
+    # 额外输出词典序选中的固定A3参考，便于和全表对照
+    if fixed_a3_reference:
         print("-" * 122)
         print(
-            f"{'Best A3 (global fixed)':<30} "
-            f"{best_a3.get('ho_count_mean', 0.0):<10.2f} "
-            f"{best_a3.get('ho_success_rate_mean', 0.0):<10.4f} "
-            f"{best_a3.get('sinr_mean_db_mean', 0.0):<10.2f} "
-            f"{best_a3.get('outage_time_ratio_mean', 0.0):<12.4f} "
-            f"{best_a3.get('ping_pong_ratio_mean', 0.0):<8.4f} "
-            f"{best_a3.get('overlap_zone_sinr_mean_db_mean', 0.0):<12.3f} "
-            f"{best_a3.get('comm_interruption_ratio_in_overlap_zone_mean', 0.0):<12.4f}"
+            f"{FIXED_A3_REFERENCE_NAME:<30} "
+            f"{fixed_a3_reference.get('ho_count_mean', 0.0):<10.2f} "
+            f"{fixed_a3_reference.get('ho_success_rate_mean', 0.0):<10.4f} "
+            f"{fixed_a3_reference.get('sinr_mean_db_mean', 0.0):<10.2f} "
+            f"{fixed_a3_reference.get('outage_time_ratio_mean', 0.0):<12.4f} "
+            f"{fixed_a3_reference.get('ping_pong_ratio_mean', 0.0):<8.4f} "
+            f"{fixed_a3_reference.get('overlap_zone_sinr_mean_db_mean', 0.0):<12.3f} "
+            f"{fixed_a3_reference.get('comm_interruption_ratio_in_overlap_zone_mean', 0.0):<12.4f}"
         )
         print(
-            f"  -> 参数: Hys={best_a3.get('hys_db', 0.0):.1f} dB, "
-            f"TTT={best_a3.get('ttt_ms', 0.0):.0f} ms, "
-            f"对应策略: {best_a3.get('policy_name', 'N/A')}"
+            f"  -> 固定参数: Hys={fixed_a3_reference.get('hys_db', 0.0):.1f} dB, "
+            f"TTT={fixed_a3_reference.get('ttt_ms', 0.0):.0f} ms, "
+            f"对应策略: {fixed_a3_reference.get('policy_name', 'N/A')}"
         )
     
     print(f"\n测试场景数: {num_scenarios}")
 
-    # Oracle A3 参数分布（每场景最优的 (Hys, TTT) 可能不同）
+    # 逐场景全局最优A3参数分布（每场景最优的 (Hys, TTT) 可能不同）
     records = results.get("oracle_selection_records", []) or []
     if records:
         counter = Counter((float(r.get("hys_db", 0.0)), float(r.get("ttt_ms", 0.0))) for r in records)
-        print("\nOracle A3 参数分布（Top-5）:")
+        print("\n全局最优A3逐场景参数分布（Top-5）:")
         for (hys, ttt), c in counter.most_common(5):
             ratio = c / max(1, len(records))
             print(f"  Hys={hys:.1f} dB, TTT={ttt:.0f} ms: count={c}, ratio={ratio:.3f}")
@@ -884,6 +960,20 @@ def print_summary(results: dict, best_a3: dict = None):
 
 def main():
     """主函数"""
+    parser = argparse.ArgumentParser(description="批量测试：A3策略网格 vs 离线训练 Rainbow DQN")
+    parser.add_argument("--checkpoint_path", type=str, default=None,
+                        help="待评估 checkpoint 路径；默认自动选择最新非 legacy 离线 best/final 模型")
+    parser.add_argument("--num_scenarios", type=int, default=100, help="测试场景数量")
+    parser.add_argument("--base_seed", type=int, default=10000, help="场景随机种子起点")
+    parser.add_argument("--top_k_a3", type=int, default=5, help="显式对比RL动作分布Top-K A3策略")
+    parser.add_argument("--oracle_ho_penalty_weight", type=float, default=0.5,
+                        help="逐场景全局最优A3评分中的切换次数惩罚权重")
+    parser.add_argument("--oracle_topk_only", action="store_true",
+                        help="逐场景全局最优A3只在Top-K A3中选优；默认每个场景都在48组全网格中选优")
+    parser.add_argument("--run_dir", type=str, default=None,
+                        help="输出目录；默认写入 experiments/runs/<timestamp>_batch_comparison")
+    args = parser.parse_args()
+
     base_dir = PROJECT_ROOT
     env_config_path = os.path.join(base_dir, "configs", "default_env_config.yaml")
     with open(env_config_path, 'r', encoding='utf-8') as f:
@@ -900,10 +990,15 @@ def main():
     
     # 运行批量测试
     results = run_batch_test(
-        num_scenarios=100,
+        num_scenarios=args.num_scenarios,
         a3_configs=a3_configs,
-        base_seed=10000,
-        device=device
+        base_seed=args.base_seed,
+        device=device,
+        top_k_a3=args.top_k_a3,
+        oracle_use_full_grid=not args.oracle_topk_only,
+        oracle_ho_penalty_weight=args.oracle_ho_penalty_weight,
+        checkpoint_path=args.checkpoint_path,
+        run_dir=args.run_dir,
     )
     
     if results is None:
@@ -914,29 +1009,12 @@ def main():
     figures_dir = os.path.join(output_dir, "figures")
     os.makedirs(metrics_dir, exist_ok=True)
     os.makedirs(figures_dir, exist_ok=True)
-    
-    # 词典序最优 A3 参数选择（全局固定参数，仅作参考）
-    selection = select_best_a3_lexicographic(results["stats"], results["a3_configs"])
-    if selection:
-        best = selection["best"]
-        print("\n" + "=" * 80)
-        print("Best A3 (global fixed, lexicographic)")
-        print("=" * 80)
-        print(
-            f"Hys={best['hys_db']:.1f} dB, TTT={best['ttt_ms']:.0f} ms | "
-            f"ho_count_mean={best['ho_count_mean']:.4f}, "
-            f"overlap_zone_sinr_mean_db_mean={best['overlap_zone_sinr_mean_db_mean']:.4f}, "
-            f"outage_time_ratio_mean={best['outage_time_ratio_mean']:.4f}"
-        )
-        best_result_path = os.path.join(metrics_dir, "best_a3_result.json")
-        save_best_a3_result(best_result_path, selection, results["num_scenarios"])
-        print(f"全局固定最优A3结果已保存至: {best_result_path}")
 
-    # 场景级Oracle结果输出
-    oracle_stats = results.get("stats", {}).get("Oracle A3 (per-scenario best)", {})
+    # 逐场景全局最优A3结果：每个场景单独枚举候选组合并选优
+    oracle_stats = results.get("stats", {}).get(GLOBAL_ORACLE_A3_NAME, {})
     if oracle_stats:
         print("\n" + "=" * 80)
-        print("Oracle A3 (per-scenario best)")
+        print(f"{GLOBAL_ORACLE_A3_NAME} ({'全48组' if results.get('oracle_use_full_grid', True) else 'Top-K子集'}枚举)")
         print("=" * 80)
         print(
             "ho_count_mean={:.4f}, overlap_zone_sinr_mean_db_mean={:.4f}, outage_time_ratio_mean={:.4f}".format(
@@ -945,9 +1023,40 @@ def main():
                 oracle_stats.get("outage_time_ratio_mean", 0.0),
             )
         )
-        oracle_result_path = os.path.join(metrics_dir, "oracle_a3_result.json")
-        save_oracle_a3_result(oracle_result_path, results)
-        print(f"场景级Oracle A3结果已保存至: {oracle_result_path}")
+        global_optimal_result_path = os.path.join(metrics_dir, "global_optimal_a3_result.json")
+        save_oracle_a3_result(global_optimal_result_path, results)
+        print(f"逐场景全局最优A3结果已保存至: {global_optimal_result_path}")
+
+        # 兼容旧入口：best_a3_result.json 现在也指向逐场景全局最优，而不是固定同参A3。
+        best_result_path = os.path.join(metrics_dir, "best_a3_result.json")
+        save_oracle_a3_result(best_result_path, results)
+        print(f"best_a3_result.json 已更新为逐场景全局最优结果: {best_result_path}")
+
+        oracle_alias_path = os.path.join(metrics_dir, "oracle_a3_result.json")
+        save_oracle_a3_result(oracle_alias_path, results)
+        print(f"兼容旧文件名的Oracle结果已保存至: {oracle_alias_path}")
+    
+    # 词典序最优 A3 参数选择（全48组固定参数，仅作参考）
+    fixed_a3_stats = results.get("fixed_a3_stats", results["stats"])
+    fixed_a3_configs = results.get("fixed_a3_configs", results["a3_configs"])
+    selection = select_best_a3_lexicographic(fixed_a3_stats, fixed_a3_configs)
+    if selection:
+        best = selection["best"]
+        print("\n" + "=" * 80)
+        print(f"{FIXED_A3_REFERENCE_NAME} ({len(fixed_a3_configs)}组固定参数词典序排名)")
+        print("=" * 80)
+        print(
+            f"Hys={best['hys_db']:.1f} dB, TTT={best['ttt_ms']:.0f} ms | "
+            f"ho_count_mean={best['ho_count_mean']:.4f}, "
+            f"overlap_zone_sinr_mean_db_mean={best['overlap_zone_sinr_mean_db_mean']:.4f}, "
+            f"outage_time_ratio_mean={best['outage_time_ratio_mean']:.4f}"
+        )
+        fixed_reference_result_path = os.path.join(metrics_dir, "fixed_a3_reference_result.json")
+        save_fixed_a3_reference_result(fixed_reference_result_path, selection, results["num_scenarios"])
+        print(f"固定同参A3参考结果已保存至: {fixed_reference_result_path}")
+        fixed_grid_result_path = os.path.join(metrics_dir, "fixed_a3_grid_ranking.json")
+        save_fixed_a3_grid_result(fixed_grid_result_path, selection, results["num_scenarios"])
+        print(f"完整固定A3网格排名已保存至: {fixed_grid_result_path}")
     
     # 打印摘要
     print_summary(results, selection.get("best") if selection else None)

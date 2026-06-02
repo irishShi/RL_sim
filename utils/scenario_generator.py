@@ -12,7 +12,7 @@ class ScenarioGenerator:
     场景生成器类
 
     功能：
-    1. 生成完整的场景数据（位置序列、阴影衰落序列、天气参数等）
+    1. 生成完整的场景数据（位置序列、阴影衰落序列等）
     2. 保存场景数据到文件
     3. 从文件加载场景数据
     """
@@ -36,14 +36,6 @@ class ScenarioGenerator:
         self.shadow_sigma_A = config.get("shadow_sigma_A", 6.0)
         self.shadow_sigma_B = config.get("shadow_sigma_B", 6.0)
         self.shadow_corr_distance_m = config.get("shadow_corr_distance_m", 80.0)
-
-        # 天气参数范围
-        self.T_min = config.get("T_min", -10.0)
-        self.T_max = config.get("T_max", 40.0)
-        self.H_min = config.get("H_min", 20.0)
-        self.H_max = config.get("H_max", 100.0)
-        self.PM_min = config.get("PM_min", 0.0)
-        self.PM_max = config.get("PM_max", 300.0)
 
         # 分层速度采样配置
         self.speed_tiers_cfg = config.get("speed_tiers", {})
@@ -69,16 +61,11 @@ class ScenarioGenerator:
             v_kmh = self.v_default_kmh
         velocity_mps = v_kmh / 3.6
 
-        # 2. 采样天气参数
-        temperature = rng.uniform(self.T_min, self.T_max)
-        humidity = rng.uniform(self.H_min, self.H_max)
-        pm25 = rng.uniform(self.PM_min, self.PM_max)
-
-        # 3. 生成位置序列（基于速度和时间步长）
+        # 2. 生成位置序列（基于速度和时间步长）
         num_positions = int(self.track_length_m / position_resolution_m) + 1
         positions = np.linspace(0.0, self.track_length_m, num_positions)
 
-        # 4. 生成阴影衰落序列（使用AR(1)模型）
+        # 3. 生成阴影衰落序列（使用AR(1)模型）
         shadow_A = self._generate_shadow_sequence(rng, positions, self.shadow_sigma_A)
         shadow_B = self._generate_shadow_sequence(rng, positions, self.shadow_sigma_B)
 
@@ -86,11 +73,6 @@ class ScenarioGenerator:
             "positions": positions,
             "shadow_A": shadow_A,
             "shadow_B": shadow_B,
-            "weather": {
-                "temperature": float(temperature),
-                "humidity": float(humidity),
-                "pm25": float(pm25)
-            },
             "velocity_mps": float(velocity_mps),
             "seed": seed,
             "config": {

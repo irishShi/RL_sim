@@ -25,7 +25,7 @@ class HandoverWrapper:
         
         # 当前生效的 Hys 和 TTT 参数
         self.current_hys = 3.0  # dB
-        self.current_ttt = 160.0  # ms
+        self.current_ttt = 150.0  # ms
         
         # TTT 计时器状态
         self.ttt_timer = 0.0  # 秒
@@ -46,7 +46,7 @@ class HandoverWrapper:
         
         # 重置状态
         self.current_hys = 3.0
-        self.current_ttt = 160.0
+        self.current_ttt = 150.0
         self.ttt_timer = 0.0
         self.a3_condition_met = False
         self.last_obs = obs

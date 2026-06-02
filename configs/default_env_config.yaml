@@ -138,9 +138,9 @@ reward_training_phases:
       reward_interruption_scale: 0.8
       reward_ho_scale: 1.0
     - end_episode_ratio: 1.0
-      reward_outage_scale: 1.0        # 后期强化中断抑制
+      reward_outage_scale: 1.0        # 后期强化中断与无效切换抑制
       reward_interruption_scale: 1.4
-      reward_ho_scale: 1.0
+      reward_ho_scale: 1.8
 
 # 测量滤波增强
 enable_delta_sinr_filter: true  # 是否启用SINR差值滤波
@@ -153,19 +153,6 @@ T_guard_m: 50.0                  # 切换保护距离（米），用于distance�
 
 # TTT量化（确保TTT是50ms的倍数）
 ttt_quantize_to_50ms: true       # 是否将TTT量化到50ms网格
-
-# 天气参数范围
-T_min: -10.0                     # 最低温度（摄氏度）
-T_max: 40.0                      # 最高温度（摄氏度）
-H_min: 20.0                      # 最低湿度（%）
-H_max: 100.0                     # 最高湿度（%）
-PM_min: 0.0                      # 最低PM2.5
-PM_max: 300.0                    # 最高PM2.5
-
-# 天气对路径损耗的影响系数
-a_T: 0.02                        # 温度影响系数
-a_H: 0.01                        # 湿度影响系数
-a_PM: 0.002                      # PM2.5影响系数
 
 # 归一化范围
 rsrp_min_dbm: -120.0            # RSRP最小值（dBm）
@@ -192,7 +179,6 @@ ho_interruption_rsrp_dbm: -120.0  # 中断期间的RSRP值（dBm），设置为�
 # 2) 找到最右侧满足 (RSRP_A - RSRP_B) ≥ -N 的点作为 x_right
 # 3) 切换区 = [x_left, x_right]
 # 参考铁路 5G-R 网络规划文献：切换区由实际信号覆盖决定，而非固定几何位置。
-# 此定义随阴影衰落、天气等实时信道条件自适应变化。
+# 此定义随阴影衰落等实时信道条件自适应变化。
 ho_overlap_kpi_enabled: true
 ho_overlap_delta_rsrp_db: 5.0        # ΔRSRP 门限 N（dB）：用于切换区左右边界定义（见 envs/train_ho_env.py）
-

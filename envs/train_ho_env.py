@@ -6,7 +6,6 @@ from typing import Dict, Tuple, Optional
 import yaml
 import os
 
-from .weather_model import WeatherModel
 from .channel_model import ChannelModel
 from .ho_logic import HandoverLogic
 
@@ -44,10 +43,10 @@ class TrainHandoverEnv(gym.Env):
         if config is not None:
             self.cfg.update(config)
         
-        # 2) 观测空间：7维
-        # [RSRP_serv, RSRP_neig, SINR_serv, pos_norm, T_norm, H_norm, PM_norm]
-        high = np.array([1.0] * 7, dtype=np.float32)
-        low = np.array([0.0] * 7, dtype=np.float32)
+        # 2) 观测空间：4维
+        # [RSRP_serv, RSRP_neig, SINR_serv, pos_norm]
+        high = np.array([1.0] * 4, dtype=np.float32)
+        low = np.array([0.0] * 4, dtype=np.float32)
         self.observation_space = spaces.Box(low=low, high=high, dtype=np.float32)
         
         # 动作空间：48个动作（Hys/TTT 组合）
@@ -88,8 +87,7 @@ class TrainHandoverEnv(gym.Env):
             self.action_space_helper = None
         
         # 3) 初始化子模块
-        self.weather_model = WeatherModel(self.cfg)
-        self.channel_model = ChannelModel(self.cfg, self.weather_model)
+        self.channel_model = ChannelModel(self.cfg)
         self.ho_logic = HandoverLogic(self.cfg)
         
         # 4) 内部运行状态（每次 reset 会重置）
@@ -208,17 +206,6 @@ class TrainHandoverEnv(gym.Env):
             # 关键业务需要较高 SINR，按 5G‑R 控制信令留一定裕度
             "sinr_outage_db": -5.0,
             
-            "T_min": -10.0,
-            "T_max": 40.0,
-            "H_min": 20.0,
-            "H_max": 100.0,
-            "PM_min": 0.0,
-            "PM_max": 300.0,
-            
-            "a_T": 0.02,
-            "a_H": 0.01,
-            "a_PM": 0.002,
-            
             "rsrp_min_dbm": -120.0,
             "rsrp_max_dbm": -60.0,
             "sinr_min_db": -10.0,
@@ -291,7 +278,6 @@ class TrainHandoverEnv(gym.Env):
         # 使用 Gymnasium 管理的 self.np_random（由 super().reset(seed=seed) 设置），
         # 避免污染全局 np.random 状态，确保数据收集策略的随机性不受环境 seed 影响
         rng = self.np_random
-        self.weather_model.set_rng(rng)
         self.channel_model.set_rng(rng)
 
         if scenario_data is not None:
@@ -303,21 +289,10 @@ class TrainHandoverEnv(gym.Env):
             self.time_step = 0
             self.serving_cell = 0  # 默认在 A 小区
 
-            # 2) 设置天气参数（从场景数据中获取）
-            weather = scenario_data["weather"]
-            self.weather_model.temperature = weather["temperature"]
-            self.weather_model.humidity = weather["humidity"]
-            self.weather_model.pm25 = weather["pm25"]
-
             # 2.5) 重置信道模型的阴影衰落状态（传入场景数据）
             self.channel_model.reset(seed=None, scenario_data=scenario_data)
         else:
             # 使用 self.np_random 生成场景，确保同一 seed 生成相同的场景
-            # 随机数使用顺序（固定）：
-            #   1. 速度采样（如果random_speed=True，消耗1个；否则跳过但保持位置）
-            #   2-4. 天气采样（温度、湿度、PM2.5，消耗3个）
-            #   5-6. 阴影衰落初始值（阴影A、阴影B，消耗2个）
-
             # 1) 位置和速度
             self.position_m = 0.0
             if self.cfg["random_speed"]:
@@ -339,9 +314,6 @@ class TrainHandoverEnv(gym.Env):
 
             self.time_step = 0
             self.serving_cell = 0  # 默认在 A 小区
-
-            # 2) 采样天气（消耗第2-4个随机数：温度、湿度、PM2.5）
-            self.weather_model.sample_weather()
 
             # 2.5) 重置信道模型的阴影衰落状态
             # 阴影衰落初始值采样（消耗第5-6个随机数：阴影A、阴影B）
@@ -672,17 +644,11 @@ class TrainHandoverEnv(gym.Env):
         rsrp_neig_n = self._normalize(rsrp_neig, rsrp_min, rsrp_max)
         sinr_serv_n = self._normalize(sinr_serv, sinr_min, sinr_max)
         
-        # 3) 天气归一化
-        T_n, H_n, PM_n = self.weather_model.normalize_weather()
-        
         obs = np.array([
             rsrp_serv_n,
             rsrp_neig_n,
             sinr_serv_n,
-            pos_norm,
-            T_n,
-            H_n,
-            PM_n
+            pos_norm
         ], dtype=np.float32)
         
         return obs
@@ -839,14 +805,17 @@ class TrainHandoverEnv(gym.Env):
         """
         cfg = self.cfg
         in_oz = self._in_handover_overlap_zone(self.position_m)
+        out_scale = float(cfg.get("reward_outage_scale", 1.0))
+        int_scale = float(cfg.get("reward_interruption_scale", 1.0))
+        ho_scale = float(cfg.get("reward_ho_scale", 1.0))
 
         if not in_oz:
             # ── 切换区外：奖励≈0，仅保留安全网 ──
             reward = 0.0
             if outage:
-                reward -= float(cfg.get("r5_outside_outage_penalty", 1.0))
+                reward -= out_scale * float(cfg.get("r5_outside_outage_penalty", 1.0))
             if in_interruption:
-                reward -= float(cfg.get("r5_outside_interruption_penalty", 0.5))
+                reward -= int_scale * float(cfg.get("r5_outside_interruption_penalty", 0.5))
             return reward
 
         # ── 切换区内 ──
@@ -879,18 +848,18 @@ class TrainHandoverEnv(gym.Env):
 
         # 3. Outage 惩罚（最严重）
         if outage:
-            reward -= float(cfg.get("r5_outage_penalty", 5.0))
+            reward -= out_scale * float(cfg.get("r5_outage_penalty", 5.0))
 
         # 4. 切换中断惩罚
         if in_interruption:
-            reward -= float(cfg.get("r5_interruption_penalty", 2.0))
+            reward -= int_scale * float(cfg.get("r5_interruption_penalty", 2.0))
 
         # 5. 切换执行惩罚
         if ho_executed:
-            reward -= float(cfg.get("r5_ho_penalty", 1.0))
+            reward -= ho_scale * float(cfg.get("r5_ho_penalty", 1.0))
             # 乒乓切换额外惩罚（_update_kpis 在 reward 之前调用，已设置标志）
             if self._r5_pingpong_this_step:
-                reward -= float(cfg.get("r5_pingpong_extra_penalty", 2.0))
+                reward -= ho_scale * float(cfg.get("r5_pingpong_extra_penalty", 2.0))
 
         return reward
 
@@ -1114,4 +1083,3 @@ class TrainHandoverEnv(gym.Env):
             print(f"Step: {self.time_step}, Position: {self.position_m:.2f}m, "
                   f"Serving Cell: {self.serving_cell}, "
                   f"SINR: {self.last_sinr_serv:.2f}dB")
-

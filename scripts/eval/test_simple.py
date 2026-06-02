@@ -6,6 +6,9 @@
 2. 使用相同seed分别运行传统A3和离线Rainbow DQN
 3. 绘制RSRP曲线和切换点对比图
 """
+import argparse
+import glob
+import json
 import os
 import sys
 import numpy as np
@@ -19,11 +22,71 @@ if PROJECT_ROOT not in sys.path:
 
 from envs.train_ho_env import TrainHandoverEnv
 from models import RainbowWithForecast, ActionSpace, ObservationWindow
+from utils import ActionHoldController
 from utils.scenario_generator import ScenarioGenerator
 
 # 配置 matplotlib 支持中文显示
 plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'DejaVu Sans']
 plt.rcParams['axes.unicode_minus'] = False
+
+
+def resolve_checkpoint_path(base_dir: str, checkpoint_path: str = None) -> str:
+    """解析 checkpoint 路径；未指定时优先选择最新非 legacy 的离线 best/final 模型。"""
+    if checkpoint_path:
+        path = checkpoint_path
+        if not os.path.isabs(path):
+            path = os.path.join(base_dir, path)
+        return os.path.abspath(path)
+
+    patterns = [
+        os.path.join(base_dir, "experiments", "runs", "*", "checkpoints", "rainbow_offline_best.pth"),
+        os.path.join(base_dir, "experiments", "runs", "*", "checkpoints", "rainbow_offline_final.pth"),
+    ]
+    candidates = []
+    for pattern in patterns:
+        candidates.extend(glob.glob(pattern))
+
+    if not candidates:
+        return os.path.join(
+            base_dir,
+            "experiments",
+            "runs",
+            "legacy_20260416_offline_rainbow",
+            "checkpoints",
+            "rainbow_offline_final.pth",
+        )
+
+    def rank(path):
+        norm = path.replace("\\", "/")
+        is_legacy = "legacy_20260416_offline_rainbow" in norm
+        is_final = path.endswith("rainbow_offline_final.pth")
+        return (1 if is_legacy else 0, -os.path.getmtime(path), 1 if is_final else 0)
+
+    return os.path.abspath(sorted(candidates, key=rank)[0])
+
+
+def summarize_trajectory(traj: dict) -> dict:
+    """提取单 episode 的核心指标。"""
+    trajectory = traj.get("trajectory", [])
+    sinr = np.array([p.get("sinr_serv_db", 0.0) for p in trajectory], dtype=np.float32)
+    kpis = traj.get("last_info", {}).get("kpis", {}) or {}
+    ho_count = sum(1 for p in trajectory if p.get("ho_executed", False))
+
+    return {
+        "steps": int(len(trajectory)),
+        "ho_count": int(ho_count),
+        "sinr_mean_db": float(np.mean(sinr)) if sinr.size else 0.0,
+        "sinr_min_db": float(np.min(sinr)) if sinr.size else 0.0,
+        "sinr_p5_db": float(np.percentile(sinr, 5)) if sinr.size else 0.0,
+        "outage_time_ratio": float(kpis.get("outage_time_ratio", 0.0)),
+        "outage_events": int(kpis.get("outage_events", 0)),
+        "ping_pong_count": int(kpis.get("ping_pong_count", 0)),
+        "interruption_total_time": float(kpis.get("interruption_total_time", 0.0)),
+        "overlap_zone_sinr_mean_db": float(kpis.get("overlap_zone_sinr_mean_db", 0.0)),
+        "comm_interruption_ratio_in_overlap_zone": float(
+            kpis.get("comm_interruption_ratio_in_overlap_zone", 0.0)
+        ),
+    }
 
 
 class TraditionalA3Policy:
@@ -97,7 +160,7 @@ class TraditionalA3Policy:
 def run_episode(env, policy_func, policy_name: str, obs_window: ObservationWindow = None,
                 model: RainbowWithForecast = None, device: str = 'cpu', seed: int = 42,
                 scenario_data: dict = None, a3_policy: TraditionalA3Policy = None,
-                action_repeat_k: int = 10) -> dict:
+                action_hold_steps: int = 0) -> dict:
     """
     运行一个 episode
     
@@ -136,18 +199,24 @@ def run_episode(env, policy_func, policy_name: str, obs_window: ObservationWindo
     step_count = 0
     trajectory = []
     dt = env.cfg['delta_t_s']
-    current_action = None  # 用于 action repeat
+    action_space = ActionSpace()
+    hold_controller = ActionHoldController(
+        action_space,
+        dt,
+        fixed_hold_steps=action_hold_steps,
+    )
 
     while not done:
         # 选择动作
         if model is not None and obs_window is not None:
-            # 使用 Rainbow 模型：每 action_repeat_k 步决策一次
-            if step_count % action_repeat_k == 0 or current_action is None:
+            def select_model_action():
                 window = obs_window.get_window()  # [N, F]
                 window_tensor = torch.FloatTensor(window).unsqueeze(0).to(device)  # [1, N, F]
                 with torch.no_grad():
-                    current_action = model.act(window_tensor, epsilon=0.0)
-            action = current_action
+                    return model.act(window_tensor, epsilon=0.0)
+
+            # 使用与数据采集一致的 Hys/TTT 动作保持逻辑
+            action = hold_controller.select(select_model_action)
         else:
             # 使用传统策略（固定参数，无需 action repeat）
             action = policy_func(obs_raw, info, dt)
@@ -165,7 +234,7 @@ def run_episode(env, policy_func, policy_name: str, obs_window: ObservationWindo
                 obs_window.update_ho_time(current_time)
             obs_window.update_params(
                 info.get('current_hys', 3.0),
-                info.get('current_ttt', 160.0)
+                info.get('current_ttt', 150.0)
             )
             obs_window.build_observation(
                 next_obs_raw, info,
@@ -212,7 +281,7 @@ def run_episode(env, policy_func, policy_name: str, obs_window: ObservationWindo
 
 
 def plot_comparison(traj_a3: dict, traj_rl: dict, output_path: str = "test_comparison.png",
-                    a3_hys: float = 3.0, a3_ttt: float = 160.0):
+                    a3_hys: float = 3.0, a3_ttt: float = 150.0):
     """
     绘制A3和RL策略的RSRP曲线和切换点对比图
     
@@ -335,6 +404,18 @@ def plot_comparison(traj_a3: dict, traj_rl: dict, output_path: str = "test_compa
 
 def main():
     """主函数"""
+    parser = argparse.ArgumentParser(description="单场景测试：传统A3 vs 离线训练 Rainbow DQN")
+    parser.add_argument("--checkpoint_path", type=str, default=None,
+                        help="待评估 checkpoint 路径；默认自动选择最新非 legacy 离线 best/final 模型")
+    parser.add_argument("--scenario_seed", type=int, default=10000, help="评估场景随机种子")
+    parser.add_argument("--output_dir", type=str, default=None,
+                        help="输出目录；默认写入 checkpoint 所在 run 的 figures/eval_simple")
+    parser.add_argument("--a3_hys", type=float, default=3.0, help="传统A3 Hys参数")
+    parser.add_argument("--a3_ttt", type=float, default=150.0, help="传统A3 TTT参数(ms)")
+    parser.add_argument("--action_hold_steps", type=int, default=0,
+                        help="RL动作保持步数（0=根据TTT自适应，>0=固定步数）")
+    args = parser.parse_args()
+
     print("=" * 80)
     print("简单测试：传统A3 vs 离线训练 Rainbow DQN")
     print("=" * 80)
@@ -352,8 +433,7 @@ def main():
     print(f"\n使用设备: {device}")
     
     # 3. 查找离线训练模型
-    checkpoints_dir = os.path.join(base_dir, "experiments", "runs", "legacy_20260416_offline_rainbow", "checkpoints")
-    checkpoint_path = os.path.join(checkpoints_dir, "rainbow_offline_final.pth")
+    checkpoint_path = resolve_checkpoint_path(base_dir, args.checkpoint_path)
     
     if not os.path.exists(checkpoint_path):
         print(f"\n错误：未找到离线训练模型！")
@@ -387,7 +467,14 @@ def main():
         use_noisy=use_noisy
     ).to(device)
     
-    model.load_state_dict(checkpoint['online_net_state_dict'])
+    try:
+        model.load_state_dict(checkpoint['online_net_state_dict'])
+    except RuntimeError as exc:
+        raise RuntimeError(
+            "Checkpoint 与当前模型输入维度不兼容。当前版本已移除天气/温度特征，"
+            "并从策略输入中移除当前 Hys/TTT，obs_dim 已调整为 7；"
+            "需要重新采集离线数据并重新训练模型。"
+        ) from exc
     model.eval()
     print("模型加载成功！")
     
@@ -400,8 +487,8 @@ def main():
     obs_window = ObservationWindow(window_size=window_size, obs_dim=obs_dim)
     
     # 7. 创建A3策略
-    a3_hys = 3.0  # dB
-    a3_ttt = 160.0  # ms
+    a3_hys = args.a3_hys  # dB
+    a3_ttt = args.a3_ttt  # ms
     a3_policy = TraditionalA3Policy(a3_hys, a3_ttt, action_space)
     a3_policy.reset()
     
@@ -409,7 +496,7 @@ def main():
         return a3_policy.decide(obs, info, dt)
     
     # 8. 生成场景数据（确保两个策略使用相同的场景）
-    seed = 10000
+    seed = args.scenario_seed
     print(f"\n生成场景数据（seed={seed}）...")
     
     # 创建场景生成器
@@ -428,7 +515,7 @@ def main():
     print("\n运行传统A3策略...")
     traj_a3 = run_episode(
         env_a3, a3_policy_func,
-        "A3 (Hys=3.0dB, TTT=160ms)",
+        f"A3 (Hys={a3_hys:.1f}dB, TTT={a3_ttt:.0f}ms)",
         obs_window=None, model=None, device=device, seed=None, scenario_data=scenario_data,
         a3_policy=a3_policy
     )
@@ -437,21 +524,48 @@ def main():
     traj_rl = run_episode(
         env_rl, None,
         "离线训练 Rainbow DQN",
-        obs_window=obs_window, model=model, device=device, seed=None, scenario_data=scenario_data
+        obs_window=obs_window, model=model, device=device, seed=None, scenario_data=scenario_data,
+        action_hold_steps=args.action_hold_steps
     )
     
     # 9. 打印统计信息
-    ho_count_a3 = sum(1 for p in traj_a3['trajectory'] if p['ho_executed'])
-    ho_count_rl = sum(1 for p in traj_rl['trajectory'] if p['ho_executed'])
+    summary_a3 = summarize_trajectory(traj_a3)
+    summary_rl = summarize_trajectory(traj_rl)
     
     print(f"\n统计信息:")
-    print(f"  A3策略: 切换次数={ho_count_a3}, 步数={len(traj_a3['trajectory'])}")
-    print(f"  RL策略: 切换次数={ho_count_rl}, 步数={len(traj_rl['trajectory'])}")
+    print(
+        f"  A3策略: 切换次数={summary_a3['ho_count']}, 步数={summary_a3['steps']}, "
+        f"SINR均值={summary_a3['sinr_mean_db']:.2f}dB, Outage占比={summary_a3['outage_time_ratio']:.4f}"
+    )
+    print(
+        f"  RL策略: 切换次数={summary_rl['ho_count']}, 步数={summary_rl['steps']}, "
+        f"SINR均值={summary_rl['sinr_mean_db']:.2f}dB, Outage占比={summary_rl['outage_time_ratio']:.4f}"
+    )
     
     # 10. 绘制对比图
-    output_path = os.path.join(base_dir, "experiments", "runs", "legacy_20260416_offline_rainbow", "figures", "test_comparison.png")
+    if args.output_dir:
+        output_dir = args.output_dir if os.path.isabs(args.output_dir) else os.path.join(base_dir, args.output_dir)
+    else:
+        run_dir = os.path.dirname(os.path.dirname(checkpoint_path))
+        output_dir = os.path.join(run_dir, "figures", "eval_simple")
+    output_path = os.path.join(output_dir, f"test_comparison_seed_{seed}.png")
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     plot_comparison(traj_a3, traj_rl, output_path, a3_hys=a3_hys, a3_ttt=a3_ttt)
+
+    metrics_path = os.path.join(output_dir, f"test_comparison_seed_{seed}.json")
+    with open(metrics_path, "w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "checkpoint_path": os.path.abspath(checkpoint_path),
+                "scenario_seed": int(seed),
+                "a3": summary_a3,
+                "rl": summary_rl,
+            },
+            f,
+            indent=2,
+            ensure_ascii=False,
+        )
+    print(f"统计指标已保存至: {metrics_path}")
     
     print("\n" + "=" * 80)
     print("测试完成！")

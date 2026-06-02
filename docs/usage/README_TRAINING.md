@@ -69,11 +69,11 @@ python test_rainbow.py
 
 2. **传统 A3 算法测试**
    - 测试多个固定参数组合：
-     - Hys=3.0dB, TTT=160ms
+     - Hys=3.0dB, TTT=150ms
      - Hys=3.0dB, TTT=320ms
-     - Hys=4.0dB, TTT=160ms
+     - Hys=4.0dB, TTT=150ms
      - Hys=4.0dB, TTT=320ms
-     - Hys=5.0dB, TTT=160ms
+     - Hys=5.0dB, TTT=150ms
 
 3. **性能对比**
    - 平均奖励

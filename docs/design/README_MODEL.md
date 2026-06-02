@@ -9,12 +9,12 @@
 动作空间将 (Hys, TTT) 组合映射为离散动作索引：
 
 - **Hys 集合**: {1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0} dB (8个)
-- **TTT 集合**: {0, 40, 80, 160, 320, 640} ms (6个)
+- **TTT 集合**: {0, 50, 100, 150, 300, 650} ms (6个)
 - **总动作数**: 8 × 6 = 48
 
 ### 2. 观测空间
 
-#### 单步观测（10维）
+#### 单步观测（7维）
 
 每个时间步的特征包括：
 
@@ -25,19 +25,22 @@
 4. `v_norm` - 速度归一化
 5. `pos_norm` - 位置归一化
 6. `time_since_last_ho_norm` - 距离上次切换时间归一化
-7. `Hys_norm` - 当前 Hys 参数归一化
-8. `TTT_norm` - 当前 TTT 参数归一化
-9. `T_norm` - 温度归一化
+
+当前 Hys/TTT 不再作为策略输入特征，以避免 Q 网络学习“当前参数是什么就继续选择什么”的动作复制捷径。
 
 #### 时序窗口
 
 - **窗口长度**: N = 15 步（覆盖 1.5 秒，假设 100ms 采样）
-- **输入形状**: [batch_size, N, 10]
+- **输入形状**: [batch_size, N, 7]
 
-### 3. 网络架构
+### 3. Action hold 控制频率
+
+`Hys` 和 `TTT` 表示一段时间内持续生效的切换参数，而不是每个仿真步都应重新选择的瞬时控制量。当前主流程统一使用自适应 action hold：保持步数默认为 `max(6, ceil(TTT / delta_t) + 2)`，上限为 20 步。这样可以让较大的 TTT 有机会完成计时，同时保留模型在列车快速移动场景中的调参能力。
+
+### 4. 网络架构
 
 ```
-输入 [B, N, 10]
+输入 [B, N, 7]
     ↓
 时序编码器 (GRU)
     ↓ [B, 128]
@@ -82,7 +85,7 @@ action_space = ActionSpace()
 
 # 创建模型
 model = RainbowWithForecast(
-    obs_dim=10,
+    obs_dim=7,
     num_actions=48,
     n_steps=15,
     feature_hidden=256,
@@ -93,10 +96,10 @@ model = RainbowWithForecast(
 )
 
 # 创建观测窗口
-obs_window = ObservationWindow(window_size=15, obs_dim=10)
+obs_window = ObservationWindow(window_size=15, obs_dim=7)
 
 # 构建观测
-obs_raw = np.array([...])  # 7维原始观测
+obs_raw = np.array([...])  # 4维原始观测
 info = {'rsrp_serv_dbm': -90.0, 'rsrp_neig_dbm': -85.0}
 obs_extended = obs_window.build_observation(
     obs_raw, info,
@@ -105,10 +108,10 @@ obs_extended = obs_window.build_observation(
 )
 
 # 获取窗口
-window = obs_window.get_window()  # [15, 10]
+window = obs_window.get_window()  # [15, 7]
 
 # 模型推理
-window_tensor = torch.from_numpy(window).unsqueeze(0)  # [1, 15, 10]
+window_tensor = torch.from_numpy(window).unsqueeze(0)  # [1, 15, 7]
 dist, pred_delta = model(window_tensor)
 q_values = model.get_q_values(window_tensor)
 action = model.act(window_tensor, epsilon=0.0)

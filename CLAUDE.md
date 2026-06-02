@@ -39,14 +39,13 @@ The system follows a three-stage offline RL pipeline: **collect data → train o
 
 ### Environment (`envs/`)
 - **`train_ho_env.py`** — Gymnasium-compatible `TrainHandoverEnv`. Each step: apply Hys/TTT action → check A3 event → check TTT timer → execute handover if triggered → compute RSRP/SINR → compute reward. Tracks KPIs (outage time, HO count, ping-pong events).
-- **`channel_model.py`** — RSRP/SINR calculation: path loss + correlated AR(1) shadowing + weather loss + co-channel interference.
+- **`channel_model.py`** — RSRP/SINR calculation: path loss + correlated AR(1) shadowing + co-channel interference.
 - **`ho_logic.py`** — A3 event detection and TTT timer management with protection time between handovers.
-- **`weather_model.py`** — Temperature, humidity, PM2.5 effects on additional path loss.
 
 ### Models (`models/`)
 - **`rainbow_model.py`** — `RainbowWithForecast`: GRU encoder (128 hidden) → shared FC (256) → Rainbow DQN head (C51 distributional + dueling + NoisyLinear) + auxiliary ΔRSRP forecast head. Forecast loss is weighted at 0.3× the Rainbow loss.
 - **`action_space.py`** — Maps 48 discrete actions to (Hys, TTT) pairs: 8 Hys values × 6 TTT values.
-- **`observation_builder.py`** — Maintains a 15-step sliding window of 10 features per timestep, producing a `[15, 10]` tensor for the GRU.
+- **`observation_builder.py`** — Maintains a 15-step sliding window of 7 features per timestep, producing a `[15, 7]` tensor for the GRU. Current Hys/TTT are intentionally excluded from policy input to avoid action-copying shortcuts.
 
 ### Utils (`utils/`)
 - **`replay_buffer.py`** — Prioritized Experience Replay (PER) buffer.
@@ -62,7 +61,7 @@ The system follows a three-stage offline RL pipeline: **collect data → train o
 
 - **A3 Event**: Handover trigger condition — neighboring cell RSRP exceeds serving cell RSRP by more than Hys (hysteresis) for longer than TTT (time-to-trigger).
 - **Action space**: 48 actions = 8 Hys values {1.5–5.0 dB} × 6 TTT values {0–650 ms}.
-- **Observation**: 15-step window × 10 features (RSRP serving/neighbor, ΔRSRP, SINR, velocity, position, time since last HO, current Hys/TTT, temperature).
+- **Observation**: 15-step window × 7 features (RSRP serving/neighbor, ΔRSRP, SINR, velocity, position, time since last HO).
 - **Reward (R3 multi-stage)**: Base = normalized SINR. Penalties: outage (-15.0), severe degradation (-4.0), minor degradation (-1.5), interruption per slot (-6.0), handover (-0.2).
 - **Outage/RLF**: SINR below -6 dB for 200ms continuous triggers an outage event.
 

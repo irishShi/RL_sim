@@ -9,7 +9,6 @@ if PROJECT_ROOT not in sys.path:
 
 from envs.train_ho_env import TrainHandoverEnv
 from envs.channel_model import ChannelModel
-from envs.weather_model import WeatherModel
 
 # 配置 matplotlib 支持中文显示
 plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'DejaVu Sans']  # 使用黑体或微软雅黑
@@ -26,10 +25,8 @@ def main():
     # 关掉快衰落，只看大尺度+阴影，避免曲线太“毛”
     cfg["enable_fast_fading"] = False
 
-    weather = WeatherModel(cfg)
-    weather.set_rng(np.random.default_rng(0))
-    weather.sample_weather()
-    channel = ChannelModel(cfg, weather)
+    channel = ChannelModel(cfg)
+    channel.set_rng(np.random.default_rng(0))
 
     D = cfg["track_length_m"]
     xs = np.linspace(0.0, D, 600)

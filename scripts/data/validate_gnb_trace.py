@@ -12,7 +12,7 @@
 1) 读取并清洗 Excel（将乱码列名按列序映射成可读字段）
 2) 以“位置”为索引，为每个 PCI 拟合/插值一条 RSRP 曲线（coverage profile）
 3) 对每个采样点，基于所有 PCI 的 profile 在当前位置估计“最强邻区”（neighbor）
-4) 生成与本项目模型一致的观测输入（ObservationWindow: 15×10）
+4) 生成与本项目模型一致的观测输入（ObservationWindow: 15×7）
 5) 跑模型推理，记录模型选择的 (Hys, TTT)
 6) 用 HandoverLogic 复现 A3+TTT+保护窗口的触发逻辑，得到“模型预测的切换事件”，并与真实 PCI 变化对比
 
@@ -289,6 +289,7 @@ def main():
     import yaml
     from envs.ho_logic import HandoverLogic
     from models import RainbowWithForecast, ActionSpace, ObservationWindow
+    from utils import ActionHoldController
 
     if not os.path.exists(model_path):
         raise FileNotFoundError(f"找不到模型文件: {model_path}")
@@ -322,7 +323,14 @@ def main():
         v_max=model_cfg["network"]["rainbow"]["v_max"],
         use_noisy=use_noisy,
     ).to(device)
-    model.load_state_dict(checkpoint["online_net_state_dict"])
+    try:
+        model.load_state_dict(checkpoint["online_net_state_dict"])
+    except RuntimeError as exc:
+        raise RuntimeError(
+            "Checkpoint 与当前模型输入维度不兼容。当前版本已移除天气/温度特征，"
+            "并从策略输入中移除当前 Hys/TTT，obs_dim 已调整为 7；"
+            "需要重新采集离线数据并重新训练模型。"
+        ) from exc
     model.eval()
 
     action_space = ActionSpace()
@@ -337,6 +345,7 @@ def main():
 
     predicted_ho_flags: List[bool] = []
     chosen_params: List[Tuple[float, float]] = []
+    hold_controller = ActionHoldController(action_space, dt_s)
 
     current_time = 0.0
     for i in range(len(df)):
@@ -352,9 +361,6 @@ def main():
                 normalize(rsrp_neig, rsrp_min, rsrp_max),
                 normalize(sinr_serv, sinr_min, sinr_max),
                 np.clip(pos_norm, 0.0, 1.0),
-                0.5,
-                0.5,
-                0.5,
             ],
             dtype=np.float32,
         )
@@ -377,10 +383,13 @@ def main():
             current_time += dt_s
             continue
 
-        window = obs_window.get_window()
-        window_tensor = torch.from_numpy(window).float().unsqueeze(0).to(device)
-        with torch.no_grad():
-            action = model.act(window_tensor, epsilon=0.0)
+        def select_model_action():
+            window = obs_window.get_window()
+            window_tensor = torch.from_numpy(window).float().unsqueeze(0).to(device)
+            with torch.no_grad():
+                return model.act(window_tensor, epsilon=0.0)
+
+        action = hold_controller.select(select_model_action)
 
         hys, ttt = action_space.action_to_hys_ttt(int(action))
         chosen_params.append((hys, ttt))

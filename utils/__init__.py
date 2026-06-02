@@ -1,10 +1,17 @@
 """工具模块"""
 from .replay_buffer import ReplayBuffer, NStepBuffer
 from .c51_projection import project_distribution
+from .action_hold import ActionHoldController, compute_action_hold_steps
 
 # 可选导入（避免循环依赖）
 try:
     from .dataset_loader import OfflineDataset
-    __all__ = ['ReplayBuffer', 'NStepBuffer', 'project_distribution', 'OfflineDataset']
+    __all__ = [
+        'ReplayBuffer', 'NStepBuffer', 'project_distribution', 'OfflineDataset',
+        'ActionHoldController', 'compute_action_hold_steps'
+    ]
 except ImportError:
-    __all__ = ['ReplayBuffer', 'NStepBuffer', 'project_distribution']
+    __all__ = [
+        'ReplayBuffer', 'NStepBuffer', 'project_distribution',
+        'ActionHoldController', 'compute_action_hold_steps'
+    ]
