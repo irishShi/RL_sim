@@ -15,15 +15,20 @@ venv/
 checkpoints/
 logs/
 plots/
+results/
 scenarios/
 
-# Experiments: keep optional notes/config manually if needed, ignore bulky generated runs by default.
-experiments/runs/*/checkpoints/
-experiments/runs/*/logs/
-experiments/runs/*/figures/episodes/
+# Experiments
+experiments/runs/
+
+# Model artifacts
 *.pth
+*.pt
+*.ckpt
+*.onnx
 
 # Large or generated data
+*.npz
 data/raw/
 data/processed/
 data/datasets/
