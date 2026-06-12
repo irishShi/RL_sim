@@ -1,0 +1,65 @@
+--- src/simu5g/stack/phy/LtePhyUe.h
++++ src/simu5g/stack/phy/LtePhyUe.h
+@@
+     double computeRailwayPolicySinrProxy(double servingRsrpDbm, double neighborRsrpDbm) const;
+@@
+     double computeMeanRsrp(LteAirFrame *frame, UserControlInfo *lteInfo);
++    double computeMeanSinr(LteAirFrame *frame, UserControlInfo *lteInfo);
+     void handleRailwayA3Handover(MacNodeId sourceId, double sourceRsrp);
+--- src/simu5g/stack/phy/LtePhyUe.cc
++++ src/simu5g/stack/phy/LtePhyUe.cc
+@@
+ double LtePhyUe::computeMeanRsrp(LteAirFrame *frame, UserControlInfo *lteInfo)
+ {
+     std::vector<double> rsrpVector = primaryChannelModel_->getRSRP(frame, lteInfo);
+     if (rsrpVector.empty())
+         return -999.0;
+@@
+     }
+     return validValues == 0 ? -999.0 : rsrp / validValues;
+ }
+ 
++double LtePhyUe::computeMeanSinr(LteAirFrame *frame, UserControlInfo *lteInfo)
++{
++    std::vector<double> sinrVector = primaryChannelModel_->getSINR(frame, lteInfo);
++    if (sinrVector.empty())
++        return -999.0;
++
++    double sinr = 0;
++    unsigned int validValues = 0;
++    for (auto value : sinrVector) {
++        if (!std::isfinite(value))
++            continue;
++        sinr += value;
++        validValues++;
++    }
++    return validValues == 0 ? -999.0 : sinr / validValues;
++}
++
+ void LtePhyUe::loadRailwayPolicyTable()
+ {
+@@
+     double servingRsrp = -999.0;
++    double measuredServingSinr = -999.0;
+     double neighborRsrp = -999.0;
+     MacNodeId bestNeighborCell = NODEID_NONE;
+@@
+         double rsrp = computeMeanRsrp(frame, cInfo);
+-        if (cellId == masterId_)
++        if (cellId == masterId_) {
+             servingRsrp = rsrp;
++            if (railwayPolicyTableEnabled_ && simTime() > SIMTIME_ZERO)
++                measuredServingSinr = computeMeanSinr(frame, cInfo);
++        }
+         else if (bestNeighborCell == NODEID_NONE || rsrp > neighborRsrp) {
+             bestNeighborCell = cellId;
+             neighborRsrp = rsrp;
+@@
+     emit(servingRsrpSignal_, servingRsrp);
+     emit(neighborRsrpSignal_, neighborRsrp);
+     emit(deltaRsrpSignal_, neighborRsrp - servingRsrp);
+-    double servingSinr = computeRailwayPolicySinrProxy(servingRsrp, neighborRsrp);
++    double servingSinr = measuredServingSinr > -900.0
++            ? measuredServingSinr
++            : computeRailwayPolicySinrProxy(servingRsrp, neighborRsrp);
+     emit(servingSinrSignal_, servingSinr);

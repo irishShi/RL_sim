@@ -1,0 +1,50 @@
+diff -ruN v2/src/simu5g/stack/phy/LtePhyUe.cc new/src/simu5g/stack/phy/LtePhyUe.cc
+--- v2/src/simu5g/stack/phy/LtePhyUe.cc	2026-06-03 15:20:14.289220900 +0800
++++ new/src/simu5g/stack/phy/LtePhyUe.cc	2026-06-03 15:30:55.512619600 +0800
+@@ -58,6 +58,7 @@
+         railwayA3TttHandover_ = par("railwayA3TttHandover").boolValue();
+         railwayA3HysteresisDb_ = par("railwayA3Hysteresis").doubleValue();
+         railwayA3TimeToTrigger_ = par("railwayA3TimeToTrigger").doubleValue();
++        railwayA3MinNeighborRsrpDb_ = par("railwayA3MinNeighborRsrp").doubleValue();
+         dynamicCellAssociation_ = par("dynamicCellAssociation");
+         if (par("minRssiDefault").boolValue())
+             minRssi_ = binder_->phyPisaData.minSnr();
+@@ -83,6 +84,7 @@
+         WATCH(railwayA3TttHandover_);
+         WATCH(railwayA3HysteresisDb_);
+         WATCH(railwayA3TimeToTrigger_);
++        WATCH(railwayA3MinNeighborRsrpDb_);
+ 
+         txPower_ = ueTxPower_;
+ 
+@@ -227,7 +229,7 @@
+ 
+ void LtePhyUe::handleRailwayA3Handover(MacNodeId sourceId, double sourceRsrp)
+ {
+-    if (sourceId != masterId_ && sourceRsrp < minRssi_)
++    if (sourceId != masterId_ && sourceRsrp < railwayA3MinNeighborRsrpDb_)
+         return;
+ 
+     if (masterId_ == NODEID_NONE) {
+diff -ruN v2/src/simu5g/stack/phy/LtePhyUe.h new/src/simu5g/stack/phy/LtePhyUe.h
+--- v2/src/simu5g/stack/phy/LtePhyUe.h	2026-06-03 15:08:20.119225000 +0800
++++ new/src/simu5g/stack/phy/LtePhyUe.h	2026-06-03 15:30:39.707618900 +0800
+@@ -98,6 +98,7 @@
+     bool railwayA3TttHandover_ = false;
+     double railwayA3HysteresisDb_ = 3.0;
+     double railwayA3TimeToTrigger_ = 0.16;
++    double railwayA3MinNeighborRsrpDb_ = -130.0;
+     MacNodeId railwayA3PendingCellId_ = NODEID_NONE;
+ 
+     /** Time when the last handover was completed. */
+diff -ruN v2/src/simu5g/stack/phy/LtePhyUe.ned new/src/simu5g/stack/phy/LtePhyUe.ned
+--- v2/src/simu5g/stack/phy/LtePhyUe.ned	2026-06-03 15:09:09.466687900 +0800
++++ new/src/simu5g/stack/phy/LtePhyUe.ned	2026-06-03 15:30:47.231743000 +0800
+@@ -47,6 +47,7 @@
+         bool railwayA3TttHandover = default(false);
+         double railwayA3Hysteresis @unit(dB) = default(3dB);
+         double railwayA3TimeToTrigger @unit(s) = default(0.16s);
++        double railwayA3MinNeighborRsrp @unit(dB) = default(-130dB);
+ 
+         //# Mobility and serving-cell statistics
+         @signal[distance];

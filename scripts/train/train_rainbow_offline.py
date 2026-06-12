@@ -25,9 +25,11 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from models import RainbowWithForecast, ActionSpace
+from models import RainbowWithForecast, RainbowWithPhysicsRisk, ActionSpace
 from utils import ReplayBuffer, project_distribution
 from utils.dataset_loader import OfflineDataset
+from utils.risk_labels import FutureRiskLabelConfig, attach_future_risk_labels
+from models.physics_features import parse_horizons_ms
 
 def _set_global_seed(seed: int) -> None:
     """尽量保证离线训练可复现（含数据划分与 val batch）。"""
@@ -68,6 +70,12 @@ def _sample_val_batch(dataset: Dict, val_idx: np.ndarray, batch_size: int, rng: 
         # 验证不需要重要性权重/indices/td_errors
         'weights': np.ones(len(pick), dtype=np.float32),
     }
+    if 'future_risk_labels' in dataset:
+        batch['future_risk_label'] = dataset['future_risk_labels'][pick]
+        batch['future_risk_weight'] = dataset.get(
+            'future_risk_weights',
+            np.ones_like(dataset['future_risk_labels'], dtype=np.float32),
+        )[pick]
     return batch
 
 
@@ -88,6 +96,16 @@ def _torch_load_checkpoint(resume_path: str, map_location: str):
     if sig is not None and 'weights_only' in sig.parameters:
         return torch.load(resume_path, map_location=map_location, weights_only=False)
     return torch.load(resume_path, map_location=map_location)
+
+
+def _forward_outputs(net, obs: torch.Tensor):
+    """兼容 RainbowWithForecast 与 RainbowWithPhysicsRisk 的前向输出。"""
+    out = net(obs)
+    if isinstance(out, tuple) and len(out) == 3:
+        dist, pred_delta, risk_logits = out
+        return dist, pred_delta, risk_logits
+    dist, pred_delta = out
+    return dist, pred_delta, None
 
 
 @torch.no_grad()
@@ -119,15 +137,15 @@ def eval_rainbow_loss_on_batch(
     n_steps = config['training']['n_steps']
 
     support_expanded = support.view(1, 1, -1)
-    dist, _ = online_net(obs)
+    dist, _, _ = _forward_outputs(online_net, obs)
     action_idx = action.unsqueeze(1).unsqueeze(2).expand(-1, 1, num_atoms)
     dist_a = dist.gather(1, action_idx).squeeze(1)
 
-    next_dist_online, _ = online_net(next_obs)
+    next_dist_online, _, _ = _forward_outputs(online_net, next_obs)
     next_q = (next_dist_online * support_expanded).sum(dim=-1)
     next_action = next_q.argmax(dim=1, keepdim=True)
 
-    next_dist_target, _ = target_net(next_obs)
+    next_dist_target, _, _ = _forward_outputs(target_net, next_obs)
     next_action_idx = next_action.unsqueeze(2).expand(-1, 1, num_atoms)
     target_dist_a = next_dist_target.gather(1, next_action_idx).squeeze(1)
 
@@ -147,7 +165,8 @@ def train_step(batch: Dict, online_net: RainbowWithForecast, target_net: Rainbow
                use_cql: bool = True, cql_alpha: float = 0.1,
                support: Optional[torch.Tensor] = None,
                use_amp: bool = False,
-               scaler: Optional[torch.cuda.amp.GradScaler] = None) -> Dict:
+               scaler: Optional[torch.cuda.amp.GradScaler] = None,
+               enable_physics_risk: bool = False) -> Dict:
     """
     执行一次训练步骤
     
@@ -180,6 +199,12 @@ def train_step(batch: Dict, online_net: RainbowWithForecast, target_net: Rainbow
     gamma = config['training']['gamma']
     n_steps = config['training']['n_steps']
     lambda_aux = config['training']['lambda_aux']
+    risk_cfg = config.get('physics_risk', {})
+    lambda_risk = float(config['training'].get('lambda_risk', risk_cfg.get('lambda_risk', 0.0)))
+    lambda_phys = float(config['training'].get('lambda_phys', risk_cfg.get('lambda_phys', 0.0)))
+    lambda_action_phys = float(
+        config['training'].get('lambda_action_phys', risk_cfg.get('lambda_action_phys', 0.0))
+    )
     
     # 支持外部缓存 support，避免每步重复创建
     if support is None:
@@ -194,7 +219,7 @@ def train_step(batch: Dict, online_net: RainbowWithForecast, target_net: Rainbow
     autocast_ctx = torch.autocast(device_type='cuda', dtype=torch.float16) if use_amp else nullcontext()
     with autocast_ctx:
         # 当前分布和预测（一次性前向传播）
-        dist, pred_delta = online_net(obs)
+        dist, pred_delta, risk_logits = _forward_outputs(online_net, obs)
 
         # 优化：使用更高效的索引操作
         action_idx = action.unsqueeze(1).unsqueeze(2).expand(-1, 1, num_atoms)  # [B, 1, num_atoms]
@@ -203,11 +228,11 @@ def train_step(batch: Dict, online_net: RainbowWithForecast, target_net: Rainbow
         # 目标分布（Double Q）- 不需要梯度但结果需参与损失计算，用 no_grad 而非 inference_mode
         with torch.no_grad():
             target_net.eval()
-            next_dist_online, _ = online_net(next_obs)
+            next_dist_online, _, _ = _forward_outputs(online_net, next_obs)
             next_q = (next_dist_online * support_expanded).sum(dim=-1)  # [B, num_actions]
             next_action = next_q.argmax(dim=1, keepdim=True)  # [B, 1]
 
-            next_dist_target, _ = target_net(next_obs)
+            next_dist_target, _, _ = _forward_outputs(target_net, next_obs)
             next_action_idx = next_action.unsqueeze(2).expand(-1, 1, num_atoms)  # [B, 1, num_atoms]
             target_dist_a = next_dist_target.gather(1, next_action_idx).squeeze(1)  # [B, num_atoms]
 
@@ -241,8 +266,105 @@ def train_step(batch: Dict, online_net: RainbowWithForecast, target_net: Rainbow
                 adaptive_scale = rainbow_loss.detach() / (cql_loss_raw.detach().abs() + 1e-6)
             cql_loss = cql_alpha * adaptive_scale * cql_loss_raw
 
+        risk_loss = torch.tensor(0.0, device=device)
+        physics_loss = torch.tensor(0.0, device=device)
+        action_physics_loss = torch.tensor(0.0, device=device)
+        if enable_physics_risk and risk_logits is not None and 'future_risk_label' in batch:
+            risk_label = torch.as_tensor(batch['future_risk_label'], dtype=torch.float32, device=device)
+            risk_weight = torch.as_tensor(
+                batch.get('future_risk_weight', np.ones_like(batch['future_risk_label'])),
+                dtype=torch.float32,
+                device=device,
+            )
+            action_risk_logits = risk_logits.gather(
+                1,
+                action.view(-1, 1, 1).expand(-1, 1, risk_logits.size(-1)),
+            ).squeeze(1)
+            bce = F.binary_cross_entropy_with_logits(
+                action_risk_logits,
+                risk_label,
+                reduction='none',
+            )
+            risk_sample_weight = weights.view(-1, 1) * risk_weight
+            risk_loss = (bce * risk_sample_weight).sum() / risk_sample_weight.sum().clamp(min=1.0)
+
+            risk_prob = torch.sigmoid(risk_logits)
+            if risk_prob.size(-1) >= 2:
+                # 预测窗口越长，累计风险不应越低。
+                horizon_mono = F.relu(risk_prob[:, :, :-1] - risk_prob[:, :, 1:]).mean()
+            else:
+                horizon_mono = torch.tensor(0.0, device=device)
+
+            action_params = torch.as_tensor(
+                ActionSpace().action_to_params,
+                dtype=torch.float32,
+                device=device,
+            )
+            hys = action_params[:, 0].view(1, -1, 1)
+            ttt = action_params[:, 1].view(1, -1, 1)
+            long_action = (ttt >= float(risk_cfg.get('long_ttt_ms', 300.0))).float()
+            high_hys_action = (hys >= float(risk_cfg.get('high_hys_db', 4.0))).float()
+            risky_action_mask = torch.clamp(long_action + high_hys_action, 0.0, 1.0)
+            safer_action_mask = ((ttt <= float(risk_cfg.get('safe_ttt_ms', 150.0))) &
+                                 (hys <= float(risk_cfg.get('safe_hys_db', 3.0)))).float()
+
+            current_sinr_norm = obs[:, -1, 3]
+            current_delta_norm = obs[:, -1, 2]
+            sinr_db = current_sinr_norm * 30.0 - 10.0
+            delta_db = current_delta_norm * 60.0 - 30.0
+            late_context = (
+                (sinr_db <= float(risk_cfg.get('low_sinr_db', -3.0))) &
+                (delta_db >= float(risk_cfg.get('delta_advantage_db', 1.5)))
+            ).float().view(-1, 1, 1)
+            severe_late_context = (
+                (sinr_db <= float(risk_cfg.get('severe_low_sinr_db', -5.0))) &
+                (delta_db >= float(risk_cfg.get('stress_delta_advantage_db', 2.0)))
+            ).float().view(-1, 1, 1)
+            if torch.any(late_context > 0):
+                risky_mean = (risk_prob * risky_action_mask).sum(dim=1) / risky_action_mask.sum(dim=1).clamp(min=1.0)
+                safe_mean = (risk_prob * safer_action_mask).sum(dim=1) / safer_action_mask.sum(dim=1).clamp(min=1.0)
+                action_mono = (F.relu(safe_mean - risky_mean + 0.05) * late_context.squeeze(1)).sum()
+                action_mono = action_mono / late_context.squeeze(1).sum().clamp(min=1.0)
+            else:
+                action_mono = torch.tensor(0.0, device=device)
+            physics_loss = horizon_mono + action_mono
+
+            # 全动作物理伪标签：在低 SINR 且邻区已占优时，长 TTT / 高 Hys 动作应被显式标为高风险。
+            # 第一版只监督离线数据中实际执行的动作，容易低估未执行候选动作的风险。
+            if torch.any(severe_late_context > 0):
+                risky_target = torch.clamp(
+                    risky_action_mask * float(risk_cfg.get('risky_action_target', 0.95)) +
+                    (1.0 - risky_action_mask) * float(risk_cfg.get('non_risky_action_target', 0.25)),
+                    0.0,
+                    1.0,
+                ).expand_as(risk_logits)
+                action_weight = (
+                    risky_action_mask * float(risk_cfg.get('risky_action_weight', 1.0)) +
+                    safer_action_mask * float(risk_cfg.get('safer_action_weight', 0.5)) +
+                    (1.0 - torch.clamp(risky_action_mask + safer_action_mask, 0.0, 1.0)) *
+                    float(risk_cfg.get('neutral_action_weight', 0.2))
+                ).expand_as(risk_logits)
+                pseudo_bce = F.binary_cross_entropy_with_logits(
+                    risk_logits,
+                    risky_target,
+                    reduction='none',
+                )
+                context_weight = severe_late_context * weights.view(-1, 1, 1)
+                pseudo_weight = context_weight * action_weight
+                action_physics_loss = (
+                    (pseudo_bce * pseudo_weight).sum() /
+                    pseudo_weight.sum().clamp(min=1.0)
+                )
+
         # 总损失
         loss = rainbow_loss + lambda_aux * forecast_loss + cql_loss
+        if enable_physics_risk:
+            loss = (
+                loss
+                + lambda_risk * risk_loss
+                + lambda_phys * physics_loss
+                + lambda_action_phys * action_physics_loss
+            )
 
     # 反向传播
     optimizer.zero_grad(set_to_none=True)
@@ -269,6 +391,9 @@ def train_step(batch: Dict, online_net: RainbowWithForecast, target_net: Rainbow
         'loss': loss.item(),
         'rainbow_loss': rainbow_loss.item(),
         'forecast_loss': forecast_loss.item(),
+        'risk_loss': risk_loss.item(),
+        'physics_loss': physics_loss.item(),
+        'action_physics_loss': action_physics_loss.item(),
         'cql_loss': cql_loss.item() if use_cql else 0.0,
         'td_errors': td_errors
     }
@@ -393,6 +518,18 @@ def main():
                        help='控制台详细输出与诊断 JSON 写入间隔（epoch），建议 5 或 10')
     parser.add_argument('--run_dir', type=str, default=None,
                        help='实验输出目录；默认写入 experiments/runs/<timestamp>_rainbow_offline_seed<seed>')
+    parser.add_argument('--enable_physics_risk', action='store_true',
+                       help='启用物理规则约束的未来风险预测头')
+    parser.add_argument('--risk_horizons_ms', type=str, default='100,200,300',
+                       help='风险预测窗口，逗号分隔，单位 ms')
+    parser.add_argument('--lambda_risk', type=float, default=0.2,
+                       help='未来风险监督损失权重')
+    parser.add_argument('--lambda_phys', type=float, default=0.05,
+                       help='物理一致性约束损失权重')
+    parser.add_argument('--lambda_action_phys', type=float, default=0.1,
+                       help='全动作物理伪标签约束损失权重')
+    parser.add_argument('--risk_short_window_steps', type=int, default=5,
+                       help='物理派生特征短窗步数')
     
     parser.set_defaults(use_cql=False)
     parser.set_defaults(amp=True)
@@ -411,6 +548,33 @@ def main():
     
     with open(model_config_path, 'r', encoding='utf-8') as f:
         model_config = yaml.safe_load(f)
+    risk_horizons_ms = parse_horizons_ms(args.risk_horizons_ms)
+    model_config.setdefault('physics_risk', {})
+    model_config['physics_risk'].update({
+        'enabled': bool(args.enable_physics_risk),
+        'horizons_ms': risk_horizons_ms,
+        'num_horizons': len(risk_horizons_ms),
+        'short_window_steps': int(args.risk_short_window_steps),
+        'lambda_risk': float(args.lambda_risk),
+        'lambda_phys': float(args.lambda_phys),
+        'lambda_action_phys': float(args.lambda_action_phys),
+        'low_sinr_db': -3.0,
+        'severe_low_sinr_db': -5.0,
+        'delta_advantage_db': 1.5,
+        'stress_delta_advantage_db': 2.0,
+        'long_ttt_ms': 300.0,
+        'high_hys_db': 4.0,
+        'safe_ttt_ms': 150.0,
+        'safe_hys_db': 3.0,
+        'risky_action_target': 0.95,
+        'non_risky_action_target': 0.25,
+        'risky_action_weight': 1.0,
+        'safer_action_weight': 0.5,
+        'neutral_action_weight': 0.2,
+    })
+    model_config['training']['lambda_risk'] = float(args.lambda_risk)
+    model_config['training']['lambda_phys'] = float(args.lambda_phys)
+    model_config['training']['lambda_action_phys'] = float(args.lambda_action_phys)
     
     # 2. 设置设备
     if torch.cuda.is_available():
@@ -452,9 +616,15 @@ def main():
     num_actions = len(hys_set) * len(ttt_set)
     
     print(f"动作空间: {num_actions} 个动作")
+    if args.enable_physics_risk:
+        label_cfg = FutureRiskLabelConfig(horizons_ms=tuple(risk_horizons_ms))
+        dataset = attach_future_risk_labels(dataset, action_space.action_to_params, label_cfg)
+        print(f"已生成未来风险标签: horizons={risk_horizons_ms} ms, "
+              f"shape={dataset['future_risk_labels'].shape}")
     
     # 5. 创建模型（离线学习不使用 NoisyNet）
-    online_net = RainbowWithForecast(
+    model_cls = RainbowWithPhysicsRisk if args.enable_physics_risk else RainbowWithForecast
+    common_model_kwargs = dict(
         obs_dim=obs_dim,
         num_actions=num_actions,
         n_steps=window_size,
@@ -463,20 +633,19 @@ def main():
         num_atoms=model_config['network']['rainbow']['num_atoms'],
         v_min=model_config['network']['rainbow']['v_min'],
         v_max=model_config['network']['rainbow']['v_max'],
-        use_noisy=False  # 离线学习不使用 NoisyNet
-    ).to(device)
-    
-    target_net = RainbowWithForecast(
-        obs_dim=obs_dim,
-        num_actions=num_actions,
-        n_steps=window_size,
-        feature_hidden=model_config['network']['shared']['hidden_dim'],
-        encoder_hidden=model_config['network']['encoder']['hidden_dim'],
-        num_atoms=model_config['network']['rainbow']['num_atoms'],
-        v_min=model_config['network']['rainbow']['v_min'],
-        v_max=model_config['network']['rainbow']['v_max'],
-        use_noisy=False
-    ).to(device)
+        use_noisy=False,
+    )
+    if args.enable_physics_risk:
+        common_model_kwargs.update({
+            'num_risk_horizons': len(risk_horizons_ms),
+            'risk_hidden_dim': int(model_config.get('physics_risk', {}).get('risk_hidden_dim', 256)),
+            'physics_short_window_steps': int(args.risk_short_window_steps),
+            'physics_delta_t_s': 0.05,
+            'physics_l3_alpha': 0.7,
+        })
+
+    online_net = model_cls(**common_model_kwargs).to(device)
+    target_net = model_cls(**common_model_kwargs).to(device)
     
     target_net.load_state_dict(online_net.state_dict())
     target_net = target_net.to(device)
@@ -485,6 +654,7 @@ def main():
     print(f"使用 NoisyNet: {online_net.use_noisy}")
     print(f"使用 CQL: {args.use_cql}")
     print(f"使用 AMP: {args.amp and device == 'cuda'}")
+    print(f"使用 Physics Risk Head: {args.enable_physics_risk}")
     if args.use_cql:
         print(f"CQL Alpha: {args.cql_alpha}")
     
@@ -510,7 +680,8 @@ def main():
         capacity=model_config['training']['replay_buffer_size'],
         obs_window_size=window_size,
         obs_dim=obs_dim,
-        per_alpha=model_config['training']['per_alpha']
+        per_alpha=model_config['training']['per_alpha'],
+        num_risk_horizons=len(risk_horizons_ms) if args.enable_physics_risk else 0,
     )
     
     print(f"\n填充经验回放缓冲区...")
@@ -534,6 +705,9 @@ def main():
         'losses': [],
         'rainbow_losses': [],
         'forecast_losses': [],
+        'risk_losses': [],
+        'physics_losses': [],
+        'action_physics_losses': [],
         'cql_losses': []
     }
 
@@ -577,6 +751,12 @@ def main():
             'seed': args.seed,
             'resume': args.resume,
             'train_log_interval': log_interval,
+            'enable_physics_risk': bool(args.enable_physics_risk),
+            'risk_horizons_ms': risk_horizons_ms,
+            'lambda_risk': float(args.lambda_risk),
+            'lambda_phys': float(args.lambda_phys),
+            'lambda_action_phys': float(args.lambda_action_phys),
+            'risk_short_window_steps': int(args.risk_short_window_steps),
         },
         'device': device,
         'dataset_num_samples': int(num_samples),
@@ -586,12 +766,16 @@ def main():
             'num_actions': num_actions,
             'param_count': int(sum(p.numel() for p in online_net.parameters())),
             'use_noisy': online_net.use_noisy,
+            'model_class': online_net.__class__.__name__,
         },
         'training_yaml': {
             'learning_rate': model_config['training']['learning_rate'],
             'gamma': model_config['training']['gamma'],
             'n_steps': model_config['training']['n_steps'],
             'lambda_aux': model_config['training']['lambda_aux'],
+            'lambda_risk': model_config['training'].get('lambda_risk', 0.0),
+            'lambda_phys': model_config['training'].get('lambda_phys', 0.0),
+            'lambda_action_phys': model_config['training'].get('lambda_action_phys', 0.0),
             'grad_clip': model_config['training']['grad_clip'],
             'replay_buffer_size': model_config['training']['replay_buffer_size'],
             'per_alpha': model_config['training']['per_alpha'],
@@ -599,6 +783,7 @@ def main():
             'target_update_freq': model_config['training']['target_update_freq'],
             'target_update_tau': target_tau,
         },
+        'physics_risk': model_config.get('physics_risk', {}),
         'rainbow': {
             'num_atoms': model_config['network']['rainbow']['num_atoms'],
             'v_min': model_config['network']['rainbow']['v_min'],
@@ -646,17 +831,28 @@ def main():
         resume_path = os.path.join(base_dir, args.resume) if not os.path.isabs(args.resume) else args.resume
         if os.path.exists(resume_path):
             ckpt = _torch_load_checkpoint(resume_path, map_location=device)
-            online_net.load_state_dict(ckpt['online_net_state_dict'])
-            target_net.load_state_dict(ckpt.get('target_net_state_dict', ckpt['online_net_state_dict']))
-            optimizer.load_state_dict(ckpt['optimizer_state_dict'])
-            step = int(ckpt.get('step', 0))
-            resume_epoch = int(ckpt.get('epoch', 0))
-            best_rainbow_loss = float(ckpt.get('best_rainbow_loss', best_rainbow_loss))
-            best_epoch = int(ckpt.get('best_epoch', best_epoch)) if 'best_epoch' in ckpt else best_epoch
-            # scheduler：简单处理为“按已完成 epoch 先 step 到位”，避免 lr 直接回到初始
-            for _ in range(max(0, resume_epoch)):
-                scheduler.step()
-            print(f"\n已从 checkpoint 恢复: {os.path.abspath(resume_path)} (epoch={resume_epoch}, step={step})")
+            ckpt_physics_risk = bool(ckpt.get('physics_risk_enabled', False))
+            warm_start_only = bool(args.enable_physics_risk and not ckpt_physics_risk)
+            if warm_start_only:
+                missing, unexpected = online_net.load_state_dict(ckpt['online_net_state_dict'], strict=False)
+                target_net.load_state_dict(online_net.state_dict())
+                print(
+                    f"\n已从旧 Rainbow checkpoint warm start 主干权重: {os.path.abspath(resume_path)}\n"
+                    f"  新风险头随机初始化；跳过 optimizer/scheduler 恢复。\n"
+                    f"  missing={len(missing)}, unexpected={len(unexpected)}"
+                )
+            else:
+                online_net.load_state_dict(ckpt['online_net_state_dict'])
+                target_net.load_state_dict(ckpt.get('target_net_state_dict', ckpt['online_net_state_dict']))
+                optimizer.load_state_dict(ckpt['optimizer_state_dict'])
+                step = int(ckpt.get('step', 0))
+                resume_epoch = int(ckpt.get('epoch', 0))
+                best_rainbow_loss = float(ckpt.get('best_rainbow_loss', best_rainbow_loss))
+                best_epoch = int(ckpt.get('best_epoch', best_epoch)) if 'best_epoch' in ckpt else best_epoch
+                # scheduler：简单处理为“按已完成 epoch 先 step 到位”，避免 lr 直接回到初始
+                for _ in range(max(0, resume_epoch)):
+                    scheduler.step()
+                print(f"\n已从 checkpoint 恢复: {os.path.abspath(resume_path)} (epoch={resume_epoch}, step={step})")
         else:
             print(f"\n警告：resume 路径不存在，将从头训练: {resume_path}")
 
@@ -676,6 +872,9 @@ def main():
             epoch_losses = []
             epoch_rainbow_losses = []
             epoch_forecast_losses = []
+            epoch_risk_losses = []
+            epoch_physics_losses = []
+            epoch_action_physics_losses = []
             epoch_cql_losses = []
 
             for batch_idx in range(num_batches):
@@ -690,7 +889,8 @@ def main():
                         cql_alpha=args.cql_alpha,
                         support=support,
                         use_amp=use_amp,
-                        scaler=scaler
+                        scaler=scaler,
+                        enable_physics_risk=args.enable_physics_risk,
                     )
 
                     buffer.update_priorities(batch['indices'], train_info['td_errors'])
@@ -698,6 +898,9 @@ def main():
                     epoch_losses.append(train_info['loss'])
                     epoch_rainbow_losses.append(train_info['rainbow_loss'])
                     epoch_forecast_losses.append(train_info['forecast_loss'])
+                    epoch_risk_losses.append(train_info.get('risk_loss', 0.0))
+                    epoch_physics_losses.append(train_info.get('physics_loss', 0.0))
+                    epoch_action_physics_losses.append(train_info.get('action_physics_loss', 0.0))
                     if args.use_cql:
                         epoch_cql_losses.append(train_info['cql_loss'])
 
@@ -717,12 +920,20 @@ def main():
                 training_stats['losses'].extend(epoch_losses)
                 training_stats['rainbow_losses'].extend(epoch_rainbow_losses)
                 training_stats['forecast_losses'].extend(epoch_forecast_losses)
+                training_stats['risk_losses'].extend(epoch_risk_losses)
+                training_stats['physics_losses'].extend(epoch_physics_losses)
+                training_stats['action_physics_losses'].extend(epoch_action_physics_losses)
                 if args.use_cql:
                     training_stats['cql_losses'].extend(epoch_cql_losses)
 
                 avg_loss = np.mean(epoch_losses)
                 avg_rainbow = np.mean(epoch_rainbow_losses)
                 avg_forecast = np.mean(epoch_forecast_losses)
+                avg_risk = float(np.mean(epoch_risk_losses)) if epoch_risk_losses else 0.0
+                avg_physics = float(np.mean(epoch_physics_losses)) if epoch_physics_losses else 0.0
+                avg_action_physics = (
+                    float(np.mean(epoch_action_physics_losses)) if epoch_action_physics_losses else 0.0
+                )
                 avg_cql = float(np.mean(epoch_cql_losses)) if (args.use_cql and epoch_cql_losses) else None
                 current_lr = optimizer.param_groups[0]['lr']
 
@@ -770,6 +981,8 @@ def main():
                         'optimizer_state_dict': optimizer.state_dict(),
                         'training_stats': training_stats,
                         'config': model_config,
+                        'model_class': online_net.__class__.__name__,
+                        'physics_risk_enabled': bool(args.enable_physics_risk),
                         'use_cql': args.use_cql,
                         'cql_alpha': args.cql_alpha if args.use_cql else None,
                         'best_rainbow_loss': best_rainbow_loss,
@@ -796,6 +1009,11 @@ def main():
                         'avg_rainbow_loss': round(float(avg_rainbow), 6),
                         'val_rainbow_loss': round(float(val_rainbow), 6) if (val_rainbow is not None and np.isfinite(val_rainbow)) else None,
                         'avg_forecast_loss': round(float(avg_forecast), 6),
+                        'avg_risk_loss': round(float(avg_risk), 6) if args.enable_physics_risk else None,
+                        'avg_physics_loss': round(float(avg_physics), 6) if args.enable_physics_risk else None,
+                        'avg_action_physics_loss': (
+                            round(float(avg_action_physics), 6) if args.enable_physics_risk else None
+                        ),
                         'avg_cql_loss': round(avg_cql, 6) if avg_cql is not None else None,
                         'lr': float(current_lr),
                         'elapsed_sec': round(elapsed, 2),
@@ -815,6 +1033,11 @@ def main():
                         f"Epoch {epoch+1:4d}/{args.num_epochs} | "
                         f"Loss: {avg_loss:.4f} (Rainbow: {avg_rainbow:.4f}, Forecast: {avg_forecast:.4f})"
                     )
+                    if args.enable_physics_risk:
+                        print_str += (
+                            f" | Risk: {avg_risk:.4f}, Phys: {avg_physics:.4f}, "
+                            f"ActionPhys: {avg_action_physics:.4f}"
+                        )
                     if val_rainbow is not None and np.isfinite(val_rainbow):
                         print_str += f" | ValRainbow: {val_rainbow:.4f}"
                     if avg_cql is not None:
@@ -850,6 +1073,8 @@ def main():
                     'optimizer_state_dict': optimizer.state_dict(),
                     'training_stats': training_stats,
                     'config': model_config,
+                    'model_class': online_net.__class__.__name__,
+                    'physics_risk_enabled': bool(args.enable_physics_risk),
                     'use_cql': args.use_cql,
                     'cql_alpha': args.cql_alpha if args.use_cql else None
                 }, save_path)
@@ -872,6 +1097,8 @@ def main():
             'optimizer_state_dict': optimizer.state_dict(),
             'training_stats': training_stats,
             'config': model_config,
+            'model_class': online_net.__class__.__name__,
+            'physics_risk_enabled': bool(args.enable_physics_risk),
             'use_cql': args.use_cql,
             'cql_alpha': args.cql_alpha if args.use_cql else None
         }, final_save_path)

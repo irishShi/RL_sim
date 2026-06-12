@@ -1,0 +1,191 @@
+//
+//                  Simu5G
+//
+// Copyright (C) 2012-2021 Giovanni Nardini, Giovanni Stea, Antonio Virdis et al. (University of Pisa)
+// Copyright (C) 2022-2026 Giovanni Nardini, Giovanni Stea et al. (University of Pisa)
+//
+// This file is part of a software released under the license included in file
+// "license.pdf". Please read LICENSE and README files before using it.
+// The above files and the present reference are part of the software itself,
+// and cannot be removed from it.
+//
+
+#ifndef _LTE_AIRPHYUE_H_
+#define _LTE_AIRPHYUE_H_
+
+#include <inet/mobility/contract/IMobility.h>
+
+#include "simu5g/stack/ip2nic/Ip2Nic.h"
+#include "simu5g/stack/phy/LtePhyBase.h"
+#include "simu5g/stack/mac/LteMacUe.h"
+#include "simu5g/stack/rlc/um/LteRlcUm.h"
+#include "simu5g/stack/pdcp/LtePdcp.h"
+#include "simu5g/stack/phy/feedback/LteDlFeedbackGenerator.h"
+
+namespace simu5g {
+
+using namespace omnetpp;
+
+class LteDlFeedbackGenerator;
+
+class LtePhyUe : public LtePhyBase
+{
+  protected:
+    /** Master MacNodeId */
+    MacNodeId masterId_ = NODEID_NONE;
+
+    /** Reference to master node's mobility module */
+    opp_component_ptr<IMobility> masterMobility_;
+
+    /** Statistic for distance from serving cell */
+    static simsignal_t distanceSignal_;
+
+    /** Statistic for serving cell */
+    static simsignal_t servingCellSignal_;
+
+    /** Railway/RL handover observation statistics */
+    static simsignal_t servingRsrpSignal_;
+    static simsignal_t neighborRsrpSignal_;
+    static simsignal_t deltaRsrpSignal_;
+    static simsignal_t bestNeighborCellSignal_;
+    static simsignal_t uePositionXSignal_;
+    static simsignal_t ueSpeedSignal_;
+    static simsignal_t timeSinceLastHandoverSignal_;
+
+    /** Self message to trigger handover procedure evaluation */
+    cMessage *handoverStarter_ = nullptr;
+
+    /** Self message to start the handover procedure */
+    cMessage *handoverTrigger_ = nullptr;
+
+    /** RSSI received from the current serving node */
+    double currentMasterRssi_;
+
+    /** ID of the not-master node from which the highest RSSI was received */
+    MacNodeId candidateMasterId_;
+
+    /** Highest RSSI received from not-master node */
+    double candidateMasterRssi_;
+
+    /**
+     * Hysteresis threshold to evaluate handover: it introduces a small polarization to
+     * avoid multiple subsequent handovers
+     */
+    double hysteresisTh_ = 0;
+
+    /**
+     * Value used to divide currentMasterRssi_ and create a hysteresisTh_
+     * Use zero to have hysteresisTh_ == 0.
+     */
+    // TODO: bring it to ned par!
+    double hysteresisFactor_ = 10;
+
+    /**
+     * Time interval elapsing from the reception of the first handover broadcast message
+     * to the beginning of the handover procedure.
+     * It must be a small number greater than 0 to ensure that all broadcast messages
+     * are received before evaluating handover.
+     * Note that broadcast messages for handover are always received at the very same time
+     * (at bdcUpdateInterval_ seconds intervals).
+     */
+    // TODO: bring it to ned par!
+    double handoverDelta_ = 0.00001;
+
+    /**
+     * Optional railway-oriented A3 + TTT controller.
+     * Disabled by default to preserve the original Simu5G behavior.
+     */
+    bool railwayA3TttHandover_ = false;
+    double railwayA3HysteresisDb_ = 3.0;
+    double railwayA3TimeToTrigger_ = 0.16;
+    MacNodeId railwayA3PendingCellId_ = NODEID_NONE;
+
+    /** Time when the last handover was completed. */
+    simtime_t lastHandoverTime_ = 0;
+
+    // Time for completion of the handover procedure
+    double handoverLatency_;
+    double handoverDetachment_;
+    double handoverAttachment_;
+
+    // Lower threshold of RSSI for detachment
+    double minRssi_;
+
+    /**
+     * Handover switch
+     */
+    bool enableHandover_;
+
+
+    opp_component_ptr<LteMacUe> mac_;
+    inet::ModuleRefByPar<LteRlcUm> rlcUm_;
+    inet::ModuleRefByPar<LtePdcpBase> pdcp_;
+    inet::ModuleRefByPar<Ip2Nic> ip2nic_;
+    inet::ModuleRefByPar<LteDlFeedbackGenerator> fbGen_;
+
+    simtime_t lastFeedback_ = 0;
+
+    // Support to print average CQI at the end of the simulation
+    std::vector<short int> cqiDlSamples_;
+    std::vector<short int> cqiUlSamples_;
+    unsigned int cqiDlSum_ = 0;
+    unsigned int cqiUlSum_ = 0;
+    unsigned int cqiDlCount_ = 0;
+    unsigned int cqiUlCount_ = 0;
+
+    bool hasCollector = false;
+
+    void initialize(int stage) override;
+    void handleSelfMessage(cMessage *msg) override;
+    void handleAirFrame(cMessage *msg) override;
+    void finish() override;
+    void finish(cComponent *component, simsignal_t signalID) override { cIListener::finish(component, signalID); }
+
+    void handleUpperMessage(cMessage *msg) override;
+
+    void emitMobilityStats() override;
+
+    void emitRailwayHandoverObservations();
+
+    /**
+     * Utility function to update the hysteresis threshold using hysteresisFactor_.
+     */
+    double updateHysteresisTh(double v);
+
+    double computeMeanRsrp(LteAirFrame *frame, UserControlInfo *lteInfo);
+    void handleRailwayA3Handover(MacNodeId sourceId, double sourceRsrp);
+
+    void handoverHandler(LteAirFrame *frame, UserControlInfo *lteInfo);
+
+    void deleteOldBuffers(MacNodeId masterId);
+
+    virtual void triggerHandover();
+    virtual void doHandover();
+
+    virtual void findCandidateEnb(MacNodeId& outCandidateMasterId, double& outCandidateMasterRssi);
+
+  public:
+    ~LtePhyUe() override;
+    /**
+     * Send feedback, called by feedback generator in DL
+     */
+    virtual void sendFeedback(LteFeedbackDoubleVector fbDl, LteFeedbackDoubleVector fbUl, FeedbackRequest req);
+    MacNodeId getMasterId() const
+    {
+        return masterId_;
+    }
+
+    simtime_t coherenceTime(double speed)
+    {
+        double fd = (speed / SPEED_OF_LIGHT) * carrierFrequency_;
+        return 0.1 / fd;
+    }
+
+    void recordCqi(unsigned int sample, Direction dir);
+    double getAverageCqi(Direction dir);
+    double getVarianceCqi(Direction dir);
+};
+
+} //namespace
+
+#endif /* _LTE_AIRPHYUE_H_ */

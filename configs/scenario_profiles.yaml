@@ -1,0 +1,256 @@
+# 鲁棒泛化训练场景 profile 配置
+#
+# 设计原则：
+# - 第一轮保持 Obs7 输入维度不变，只扩展训练/测试场景分布。
+# - train split 使用单因素和轻度混合场景，避免一开始把复合压力全部塞进训练。
+# - test split 使用未见或更难组合，专门检验泛化能力。
+
+version: 1
+
+profiles:
+  - name: normal
+    split: train
+    weight: 0.30
+    description: 标准 3 km、300 km/h 附近的正常覆盖场景。
+    overrides:
+      track_length_m: 3000.0
+      random_speed: true
+      Ptx_A_dbm:
+        uniform: [44.0, 46.0]
+      Ptx_B_dbm:
+        uniform: [44.0, 46.0]
+      shadow_sigma_A:
+        uniform: [3.0, 5.0]
+      shadow_sigma_B:
+        uniform: [3.0, 5.0]
+      noise_dbm:
+        uniform: [-98.0, -96.0]
+      enable_fast_fading: false
+      enable_extra_interference: false
+
+  - name: weak_coverage
+    split: train
+    weight: 0.15
+    description: 低发射功率和较大路径损耗的弱覆盖场景。
+    overrides:
+      track_length_m: 3000.0
+      random_speed: true
+      Ptx_A_dbm:
+        uniform: [40.0, 43.0]
+      Ptx_B_dbm:
+        uniform: [40.0, 43.0]
+      pathloss_exp_A:
+        uniform: [2.8, 3.05]
+      pathloss_exp_B:
+        uniform: [2.8, 3.05]
+      shadow_sigma_A:
+        uniform: [4.0, 6.0]
+      shadow_sigma_B:
+        uniform: [4.0, 6.0]
+      noise_dbm:
+        uniform: [-98.0, -95.0]
+      enable_fast_fading: false
+      enable_extra_interference: false
+
+  - name: high_noise
+    split: train
+    weight: 0.10
+    description: 接收噪声抬升场景。
+    overrides:
+      track_length_m: 3000.0
+      random_speed: true
+      Ptx_A_dbm:
+        uniform: [44.0, 46.0]
+      Ptx_B_dbm:
+        uniform: [44.0, 46.0]
+      shadow_sigma_A:
+        uniform: [3.0, 5.0]
+      shadow_sigma_B:
+        uniform: [3.0, 5.0]
+      noise_dbm:
+        uniform: [-94.0, -92.0]
+      enable_fast_fading: false
+      enable_extra_interference: false
+
+  - name: nlos_fading
+    split: train
+    weight: 0.15
+    description: 大阴影衰落与 Rayleigh 快衰落场景。
+    overrides:
+      track_length_m: 3000.0
+      random_speed: true
+      Ptx_A_dbm:
+        uniform: [43.0, 46.0]
+      Ptx_B_dbm:
+        uniform: [43.0, 46.0]
+      shadow_sigma_A:
+        uniform: [6.0, 8.0]
+      shadow_sigma_B:
+        uniform: [6.0, 8.0]
+      shadow_corr_distance_m:
+        uniform: [50.0, 100.0]
+      enable_fast_fading: true
+      rician_k_factor_db: null
+      noise_dbm:
+        uniform: [-98.0, -95.0]
+      enable_extra_interference: false
+
+  - name: high_interference
+    split: train
+    weight: 0.15
+    description: 动态同频干扰叠加额外干扰的场景。
+    overrides:
+      track_length_m: 3000.0
+      random_speed: true
+      Ptx_A_dbm:
+        uniform: [43.0, 46.0]
+      Ptx_B_dbm:
+        uniform: [43.0, 46.0]
+      shadow_sigma_A:
+        uniform: [4.0, 6.0]
+      shadow_sigma_B:
+        uniform: [4.0, 6.0]
+      use_dynamic_interference: true
+      enable_extra_interference: true
+      extra_interference_dbm:
+        uniform: [-100.0, -94.0]
+      noise_dbm:
+        uniform: [-98.0, -95.0]
+      enable_fast_fading: false
+
+  - name: mixed_mild
+    split: train
+    weight: 0.15
+    description: 轻度复合压力场景，用于训练阶段的温和域随机化。
+    overrides:
+      track_length_m: 3000.0
+      random_speed: true
+      Ptx_A_dbm:
+        uniform: [42.0, 45.0]
+      Ptx_B_dbm:
+        uniform: [42.0, 45.0]
+      pathloss_exp_A:
+        uniform: [2.75, 2.95]
+      pathloss_exp_B:
+        uniform: [2.75, 2.95]
+      shadow_sigma_A:
+        uniform: [5.0, 7.0]
+      shadow_sigma_B:
+        uniform: [5.0, 7.0]
+      shadow_corr_distance_m:
+        uniform: [60.0, 120.0]
+      noise_dbm:
+        uniform: [-96.0, -93.0]
+      use_dynamic_interference: true
+      enable_extra_interference:
+        choice: [false, true]
+      extra_interference_dbm:
+        uniform: [-105.0, -98.0]
+      enable_fast_fading:
+        choice: [false, true]
+      rician_k_factor_db: null
+
+  - name: realistic_trace_calib_v0
+    split: calib
+    weight: 1.0
+    description: 基于某铁路试验线实测 NR 轨迹的首版校准 profile；采用轨旁三维几何，用于 real-sim gap 审计，不直接进入默认训练或测试。
+    overrides:
+      track_length_m: 3000.0
+      random_speed: false
+      v_default_kmh: 300.0
+      Ptx_A_dbm:
+        uniform: [41.0, 42.5]
+      Ptx_B_dbm:
+        uniform: [41.0, 42.5]
+      pathloss_exp_A:
+        uniform: [2.82, 2.94]
+      pathloss_exp_B:
+        uniform: [2.82, 2.94]
+      shadow_sigma_A:
+        uniform: [4.8, 6.0]
+      shadow_sigma_B:
+        uniform: [4.8, 6.0]
+      shadow_corr_distance_m:
+        uniform: [70.0, 110.0]
+      noise_dbm:
+        uniform: [-98.0, -96.0]
+      use_dynamic_interference: true
+      dynamic_interference_attenuation_db:
+        uniform: [2.0, 4.0]
+      trackside_offset_m: 10.0
+      bs_height_m: 15.0
+      ue_height_m: 3.0
+      min_link_distance_m: 1.0
+      max_rsrp_dbm: -47.0
+      enable_extra_interference: false
+      enable_fast_fading: false
+
+  - name: stress_radio_holdout
+    split: test
+    weight: 1.0
+    description: 训练阶段不直接采样的复合无线压力保留集。
+    overrides:
+      track_length_m: 3000.0
+      random_speed: false
+      v_default_kmh: 300.0
+      Ptx_A_dbm: 40.0
+      Ptx_B_dbm: 40.0
+      pathloss_exp_A: 3.1
+      pathloss_exp_B: 3.1
+      shadow_sigma_A: 8.0
+      shadow_sigma_B: 8.0
+      shadow_corr_distance_m: 80.0
+      noise_dbm: -92.0
+      use_dynamic_interference: true
+      enable_extra_interference: true
+      extra_interference_dbm: -94.0
+      enable_fast_fading: true
+      rician_k_factor_db: null
+
+  - name: speed_400
+    split: test
+    weight: 1.0
+    description: 400 km/h 高速泛化测试。
+    overrides:
+      track_length_m: 3000.0
+      random_speed: false
+      v_default_kmh: 400.0
+      Ptx_A_dbm: 46.0
+      Ptx_B_dbm: 46.0
+      shadow_sigma_A: 5.0
+      shadow_sigma_B: 5.0
+      noise_dbm: -96.0
+      enable_fast_fading: false
+      enable_extra_interference: false
+
+  - name: distance_2km
+    split: test
+    weight: 1.0
+    description: 2 km 站间距泛化测试。
+    overrides:
+      track_length_m: 2000.0
+      random_speed: false
+      v_default_kmh: 300.0
+      Ptx_A_dbm: 46.0
+      Ptx_B_dbm: 46.0
+      shadow_sigma_A: 5.0
+      shadow_sigma_B: 5.0
+      noise_dbm: -96.0
+      enable_fast_fading: false
+      enable_extra_interference: false
+
+  - name: distance_4km
+    split: test
+    weight: 1.0
+    description: 4 km 站间距泛化测试。
+    overrides:
+      track_length_m: 4000.0
+      random_speed: false
+      v_default_kmh: 300.0
+      Ptx_A_dbm: 46.0
+      Ptx_B_dbm: 46.0
+      shadow_sigma_A: 5.0
+      shadow_sigma_B: 5.0
+      noise_dbm: -96.0
+      enable_fast_fading: false
+      enable_extra_interference: false

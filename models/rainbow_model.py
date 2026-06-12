@@ -5,6 +5,8 @@ import torch.nn.functional as F
 import numpy as np
 from typing import Tuple
 
+from .physics_features import PHYSICS_FEATURE_DIM, compute_physics_features_torch
+
 
 class NoisyLinear(nn.Module):
     """
@@ -274,6 +276,35 @@ class ForecastHead(nn.Module):
         return self.net(z).squeeze(-1)  # [B]
 
 
+class PhysicsRiskHead(nn.Module):
+    """
+    物理规则约束的未来风险预测头。
+
+    输入为 GRU/shared 特征与物理派生特征拼接后的向量，输出每个候选动作
+    在多个预测窗口内的风险 logits。
+    """
+
+    def __init__(self, feature_dim: int, num_actions: int, num_horizons: int = 3,
+                 physics_feature_dim: int = PHYSICS_FEATURE_DIM, hidden_dim: int = 256):
+        super(PhysicsRiskHead, self).__init__()
+        self.num_actions = int(num_actions)
+        self.num_horizons = int(num_horizons)
+        self.physics_feature_dim = int(physics_feature_dim)
+        self.net = nn.Sequential(
+            nn.Linear(feature_dim + physics_feature_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, self.num_actions * self.num_horizons),
+        )
+
+    def forward(self, z: torch.Tensor, physics_features: torch.Tensor) -> torch.Tensor:
+        x = torch.cat([z, physics_features], dim=1)
+        logits = self.net(x)
+        return logits.view(-1, self.num_actions, self.num_horizons)
+
+
 class RainbowWithForecast(nn.Module):
     """
     完整的 Rainbow DQN + 辅助预测模型
@@ -391,3 +422,67 @@ class RainbowWithForecast(nn.Module):
             q_values = self.get_q_values(x)  # [1, num_actions]
             action = q_values.argmax(dim=1).item()
         return action
+
+
+class RainbowWithPhysicsRisk(RainbowWithForecast):
+    """
+    Rainbow DQN + ΔRSRP 预测 + physics-informed future risk head。
+
+    该类保持主干和 Q 头与 RainbowWithForecast 一致，额外输出
+    `risk_logits: [B, num_actions, num_horizons]`。
+    """
+
+    def __init__(self, obs_dim: int, num_actions: int, n_steps: int = 15,
+                 feature_hidden: int = 256, encoder_hidden: int = 128,
+                 num_atoms: int = 51, v_min: float = -50.0, v_max: float = 80.0,
+                 use_noisy: bool = True, num_risk_horizons: int = 3,
+                 risk_hidden_dim: int = 256,
+                 physics_feature_dim: int = PHYSICS_FEATURE_DIM,
+                 physics_short_window_steps: int = 5,
+                 physics_delta_t_s: float = 0.05,
+                 physics_l3_alpha: float = 0.7):
+        super(RainbowWithPhysicsRisk, self).__init__(
+            obs_dim=obs_dim,
+            num_actions=num_actions,
+            n_steps=n_steps,
+            feature_hidden=feature_hidden,
+            encoder_hidden=encoder_hidden,
+            num_atoms=num_atoms,
+            v_min=v_min,
+            v_max=v_max,
+            use_noisy=use_noisy,
+        )
+        self.num_risk_horizons = int(num_risk_horizons)
+        self.physics_short_window_steps = int(physics_short_window_steps)
+        self.physics_delta_t_s = float(physics_delta_t_s)
+        self.physics_l3_alpha = float(physics_l3_alpha)
+        self.risk_head = PhysicsRiskHead(
+            feature_dim=feature_hidden,
+            num_actions=num_actions,
+            num_horizons=self.num_risk_horizons,
+            physics_feature_dim=physics_feature_dim,
+            hidden_dim=risk_hidden_dim,
+        )
+
+    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        h = self.encoder(x)
+        z = self.shared(h)
+        dist = self.rainbow_head(z)
+        pred_delta = self.forecast_head(z)
+        physics_features = compute_physics_features_torch(
+            x,
+            short_window_steps=self.physics_short_window_steps,
+            delta_t_s=self.physics_delta_t_s,
+            l3_alpha=self.physics_l3_alpha,
+        )
+        risk_logits = self.risk_head(z, physics_features)
+        return dist, pred_delta, risk_logits
+
+    def get_q_values(self, x: torch.Tensor) -> torch.Tensor:
+        dist, _, _ = self.forward(x)
+        return self.rainbow_head.get_q_values(dist)
+
+    def get_q_and_risk(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        dist, _, risk_logits = self.forward(x)
+        q_values = self.rainbow_head.get_q_values(dist)
+        return q_values, torch.sigmoid(risk_logits)

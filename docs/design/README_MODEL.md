@@ -1,6 +1,14 @@
 # Rainbow DQN 模型说明
 
-根据模型方案文档，本项目实现了完整的 Rainbow DQN + 辅助预测模型。
+本文档说明当前主线 `Obs7 + GRU + Rainbow DQN` 模型。早期的 10 维/9 特征模型、R3 奖励和环境包装器方案已经归档；当前训练、评估和导出统一使用 `[15, 7]` 观测窗口、48 个 A3 `(Hys, TTT)` 动作、R5 奖励和 action hold。
+
+## 模型目标与边界
+
+当前模型的目标是在高速铁路相邻小区重叠区内自适应选择 A3 的 `Hys/TTT`。模型主要优化切换时机：避免该切不切造成晚切，也避免过早切换和频繁乒乓带来的中断。对于一定程度内的弱覆盖、强干扰、NLOS/fading，如果邻区仍存在可利用质量优势，模型应能通过更合理切换缓解退化。
+
+如果极端工况中两个候选小区都处于低 SINR、目标小区同样不可用，或退化主要来自资源不足和业务排队，单靠扩大 Rainbow 网络或增加输入特征通常不能从根本上解决。此类现象应在实验中作为算法边界说明，必要时交给覆盖增强、资源调度或跨层可靠性机制。
+
+因此，后续模型扩展应优先保持小模型和可部署性。只有当新增特征或模块能稳定改善 `ho_per_km`、`ping_pong_count`、`outage_time_ratio`、`sinr_p5_db`、`overlap_zone_sinr_mean_db` 或切换区中断率时，才应进入主线。完整边界说明见 [problem_scope_and_boundaries.md](problem_scope_and_boundaries.md)。
 
 ## 模型结构
 
@@ -74,11 +82,12 @@
 
 ## 使用方法
 
-### 基本使用
+### 基本推理示例
 
 ```python
 from models import RainbowWithForecast, ActionSpace, ObservationWindow
 import torch
+import numpy as np
 
 # 创建动作空间
 action_space = ActionSpace()
@@ -99,7 +108,7 @@ model = RainbowWithForecast(
 obs_window = ObservationWindow(window_size=15, obs_dim=7)
 
 # 构建观测
-obs_raw = np.array([...])  # 4维原始观测
+obs_raw = np.array([...])
 info = {'rsrp_serv_dbm': -90.0, 'rsrp_neig_dbm': -85.0}
 obs_extended = obs_window.build_observation(
     obs_raw, info,
@@ -154,17 +163,27 @@ hys, ttt = action_space.action_to_hys_ttt(action)
 - 损失函数: `L = L_Rainbow + λ_aux * L_forecast`
 - 默认 λ_aux = 0.3
 
-## 训练流程（待实现）
+## 当前训练、评估与导出入口
 
-完整的训练流程需要：
+当前完整训练链路已经实现。推荐主线如下：
 
-1. **经验回放缓冲区** (PER - Prioritized Experience Replay)
-2. **N-step return** 计算
-3. **C51 投影算法** 实现
-4. **目标网络** 更新
-5. **训练循环** 实现
+1. 使用 `scripts/data/collect_data.py` 采集 `Obs7` 离线数据，可通过 `configs/scenario_profiles.yaml` 启用多 profile domain randomization。
+2. 使用 `scripts/train/train_rainbow_offline.py` 离线训练 Rainbow checkpoint。
+3. 使用 `scripts/eval/test_profile_generalization.py` 和 `scripts/eval/test_late_guard_generalization.py` 做 holdout profile 泛化评估。
+4. 使用 `comparison_algorithms/scripts/run_comparison.py` 做论文 baseline 对比。
+5. 使用 `scripts/export/export_policy_table.py` 或 `tools/export_late_guard_policy_preset.py` 导出 Simu5G policy table。
 
-这些将在后续的训练脚本中实现。
+当前推荐 checkpoint：
+
+```text
+experiments/runs/20260604_v1_domain_random_obs7_nocql_seed20260604/checkpoints/rainbow_offline_best.pth
+```
+
+当前推荐 policy table：
+
+```text
+results/policy_tables/policy_table.csv
+```
 
 ## 文件结构
 
@@ -172,6 +191,7 @@ hys, ttt = action_space.action_to_hys_ttt(action)
 models/
 ├── __init__.py              # 模块导出
 ├── rainbow_model.py          # 主模型实现
+├── physics_features.py       # 风险/物理辅助特征支线
 ├── action_space.py           # 动作空间定义
 └── observation_builder.py   # 观测窗口构建
 
@@ -179,12 +199,29 @@ configs/
 └── model_config.yaml        # 模型配置文件
 ```
 
-## 测试
+## 验证命令
 
-运行测试脚本验证模型：
+单场景和批量评估：
 
-```bash
-python test_model.py
+```powershell
+.\.venv\Scripts\python.exe scripts\eval\test_simple.py --checkpoint_path <checkpoint.pth>
+.\.venv\Scripts\python.exe scripts\eval\test_batch_comparison.py --checkpoint_path <checkpoint.pth>
+```
+
+profile 泛化与 late guard：
+
+```powershell
+.\.venv\Scripts\python.exe scripts\eval\test_profile_generalization.py `
+  --checkpoint_path <checkpoint.pth> `
+  --scenario_profiles_path configs/scenario_profiles.yaml `
+  --profile_split test `
+  --num_seeds 20
+
+.\.venv\Scripts\python.exe scripts\eval\test_late_guard_generalization.py `
+  --checkpoint_path <checkpoint.pth> `
+  --scenario_profiles_path configs/scenario_profiles.yaml `
+  --profile_split test `
+  --num_seeds 20
 ```
 
 ## 注意事项
@@ -195,10 +232,9 @@ python test_model.py
 4. **动作参数**: 模型输出动作索引，需要通过 ActionSpace 转换为 (Hys, TTT)
 5. **NoisyLinear**: 训练时每次前向传播前需要调用 `reset_noise()`
 
-## 下一步
+## 当前改进方向
 
-- [ ] 实现经验回放缓冲区（PER）
-- [ ] 实现 C51 投影算法
-- [ ] 实现训练循环
-- [ ] 实现环境包装器（适配新的动作空间）
-- [ ] 实现评估和可视化工具
+- 保持 `Obs7 + GRU + Rainbow DQN` 小模型作为主线。
+- 优先用 `late guard` 这类轻量、安全、可解释的约束处理明确晚切风险。
+- Stress / HighInterference 的剩余问题先做归因，区分切换可控损失和覆盖、干扰、资源或队列边界。
+- 只有多 seed、多 profile 证据表明新增模块稳定改善核心 KPI 时，才把 physics risk head、R6 reward 或新增观测纳入主线。

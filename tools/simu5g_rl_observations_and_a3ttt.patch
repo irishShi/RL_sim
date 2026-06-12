@@ -1,0 +1,343 @@
+diff -ruN orig/src/simu5g/stack/phy/LtePhyUe.cc new/src/simu5g/stack/phy/LtePhyUe.cc
+--- orig/src/simu5g/stack/phy/LtePhyUe.cc	2026-06-03 15:06:21.756057900 +0800
++++ new/src/simu5g/stack/phy/LtePhyUe.cc	2026-06-03 15:30:55.512619600 +0800
+@@ -11,6 +11,7 @@
+ //
+ 
+ #include <assert.h>
++#include <cmath>
+ #include "simu5g/stack/phy/LtePhyUe.h"
+ #include "simu5g/stack/phy/NrPhyUe.h"
+ #include "simu5g/stack/ip2nic/Ip2Nic.h"
+@@ -27,6 +28,13 @@
+ 
+ simsignal_t LtePhyUe::distanceSignal_ = registerSignal("distance");
+ simsignal_t LtePhyUe::servingCellSignal_ = registerSignal("servingCell");
++simsignal_t LtePhyUe::servingRsrpSignal_ = registerSignal("servingRsrp");
++simsignal_t LtePhyUe::neighborRsrpSignal_ = registerSignal("neighborRsrp");
++simsignal_t LtePhyUe::deltaRsrpSignal_ = registerSignal("deltaRsrp");
++simsignal_t LtePhyUe::bestNeighborCellSignal_ = registerSignal("bestNeighborCell");
++simsignal_t LtePhyUe::uePositionXSignal_ = registerSignal("uePositionX");
++simsignal_t LtePhyUe::ueSpeedSignal_ = registerSignal("ueSpeed");
++simsignal_t LtePhyUe::timeSinceLastHandoverSignal_ = registerSignal("timeSinceLastHandover");
+ 
+ LtePhyUe::~LtePhyUe()
+ {
+@@ -45,6 +53,12 @@
+         handoverLatency_ = par("handoverLatency").doubleValue();
+         handoverDetachment_ = handoverLatency_ / 2.0;                      // TODO: make this configurable from NED
+         handoverAttachment_ = handoverLatency_ - handoverDetachment_;
++        hysteresisFactor_ = par("hysteresisFactor").doubleValue();
++        handoverDelta_ = par("handoverDelta").doubleValue();
++        railwayA3TttHandover_ = par("railwayA3TttHandover").boolValue();
++        railwayA3HysteresisDb_ = par("railwayA3Hysteresis").doubleValue();
++        railwayA3TimeToTrigger_ = par("railwayA3TimeToTrigger").doubleValue();
++        railwayA3MinNeighborRsrpDb_ = par("railwayA3MinNeighborRsrp").doubleValue();
+         dynamicCellAssociation_ = par("dynamicCellAssociation");
+         if (par("minRssiDefault").boolValue())
+             minRssi_ = binder_->phyPisaData.minSnr();
+@@ -67,6 +81,10 @@
+         WATCH(hysteresisTh_);
+         WATCH(hysteresisFactor_);
+         WATCH(handoverDelta_);
++        WATCH(railwayA3TttHandover_);
++        WATCH(railwayA3HysteresisDb_);
++        WATCH(railwayA3TimeToTrigger_);
++        WATCH(railwayA3MinNeighborRsrpDb_);
+ 
+         txPower_ = ueTxPower_;
+ 
+@@ -117,6 +135,8 @@
+             cModule *masterModule = binder_->getModuleByMacNodeId(masterId_);
+             masterMobility_ = check_and_cast<IMobility *>(masterModule->getSubmodule("mobility"));
+         }
++
++        emitRailwayHandoverObservations();
+     }
+     else if (stage == INITSTAGE_SIMU5G_CELLINFO_CHANNELUPDATE) { //TODO being fwd, eliminate stage
+         // get cellInfo at this stage because the next hop of the node is registered in the Ip2Nic module at the INITSTAGE_SIMU5G_NETWORK_LAYER
+@@ -127,6 +147,130 @@
+     }
+ }
+ 
++double LtePhyUe::computeMeanRsrp(LteAirFrame *frame, UserControlInfo *lteInfo)
++{
++    std::vector<double> rsrpVector = primaryChannelModel_->getRSRP(frame, lteInfo);
++    if (rsrpVector.empty())
++        return -999.0;
++
++    double rsrp = 0;
++    unsigned int validValues = 0;
++    for (auto value : rsrpVector) {
++        if (!std::isfinite(value))
++            continue;
++        rsrp += value;
++        validValues++;
++    }
++    return validValues == 0 ? -999.0 : rsrp / validValues;
++}
++
++void LtePhyUe::emitRailwayHandoverObservations()
++{
++    emit(uePositionXSignal_, getRadioPosition().x);
++
++    double speed = 0;
++    if (hostModule != nullptr && hostModule->findSubmodule("mobility") != -1) {
++        IMobility *mobility = check_and_cast<IMobility *>(hostModule->getSubmodule("mobility"));
++        speed = mobility->getCurrentVelocity().length();
++    }
++    emit(ueSpeedSignal_, speed);
++    emit(timeSinceLastHandoverSignal_, (simTime() - lastHandoverTime_).dbl());
++
++    if (primaryChannelModel_ == nullptr) {
++        emit(servingRsrpSignal_, -999.0);
++        emit(neighborRsrpSignal_, -999.0);
++        emit(deltaRsrpSignal_, 0.0);
++        emit(bestNeighborCellSignal_, (long)NODEID_NONE);
++        return;
++    }
++
++    LteAirFrame *frame = new LteAirFrame("railwayRsrpObservationFrame");
++    UserControlInfo *cInfo = new UserControlInfo();
++
++    double servingRsrp = -999.0;
++    double neighborRsrp = -999.0;
++    MacNodeId bestNeighborCell = NODEID_NONE;
++
++    for (const auto& enbInfo : binder_->getEnbList()) {
++        if (isNr_ != enbInfo->isNr)
++            continue;
++
++        MacNodeId cellId = enbInfo->id;
++        LtePhyBase *cellPhy = check_and_cast<LtePhyBase *>(
++                enbInfo->eNodeB->getSubmodule("cellularNic")->getSubmodule("phy"));
++        GHz ueCarrierFrequency = primaryChannelModel_->getCarrierFrequency();
++        LteChannelModel *cellChannelModel = cellPhy->getChannelModel(ueCarrierFrequency);
++        if (cellChannelModel == nullptr)
++            continue;
++
++        cInfo->setSourceId(cellId);
++        cInfo->setTxPower(cellPhy->getTxPwr());
++        cInfo->setCoord(cellPhy->getCoord());
++        cInfo->setFrameType(BROADCASTPKT);
++        cInfo->setDirection(DL);
++
++        double rsrp = computeMeanRsrp(frame, cInfo);
++        if (cellId == masterId_)
++            servingRsrp = rsrp;
++        else if (bestNeighborCell == NODEID_NONE || rsrp > neighborRsrp) {
++            bestNeighborCell = cellId;
++            neighborRsrp = rsrp;
++        }
++    }
++
++    delete cInfo;
++    delete frame;
++
++    emit(servingRsrpSignal_, servingRsrp);
++    emit(neighborRsrpSignal_, neighborRsrp);
++    emit(deltaRsrpSignal_, neighborRsrp - servingRsrp);
++    emit(bestNeighborCellSignal_, (long)bestNeighborCell);
++}
++
++void LtePhyUe::handleRailwayA3Handover(MacNodeId sourceId, double sourceRsrp)
++{
++    if (sourceId != masterId_ && sourceRsrp < railwayA3MinNeighborRsrpDb_)
++        return;
++
++    if (masterId_ == NODEID_NONE) {
++        candidateMasterId_ = sourceId;
++        candidateMasterRssi_ = sourceRsrp;
++        binder_->addHandoverTriggered(nodeId_, masterId_, candidateMasterId_);
++        if (!handoverStarter_->isScheduled())
++            scheduleAt(simTime() + railwayA3TimeToTrigger_, handoverStarter_);
++        return;
++    }
++
++    if (sourceId == masterId_) {
++        currentMasterRssi_ = sourceRsrp;
++        if (railwayA3PendingCellId_ != NODEID_NONE && candidateMasterRssi_ - currentMasterRssi_ <= railwayA3HysteresisDb_) {
++            cancelEvent(handoverStarter_);
++            railwayA3PendingCellId_ = NODEID_NONE;
++            binder_->removeHandoverTriggered(nodeId_);
++        }
++        return;
++    }
++
++    if (currentMasterRssi_ <= -900.0)
++        return;
++
++    if (sourceRsrp - currentMasterRssi_ > railwayA3HysteresisDb_) {
++        candidateMasterId_ = sourceId;
++        candidateMasterRssi_ = sourceRsrp;
++        if (railwayA3PendingCellId_ != sourceId || !handoverStarter_->isScheduled()) {
++            cancelEvent(handoverStarter_);
++            railwayA3PendingCellId_ = sourceId;
++            binder_->addHandoverTriggered(nodeId_, masterId_, candidateMasterId_);
++            scheduleAt(simTime() + railwayA3TimeToTrigger_, handoverStarter_);
++        }
++    }
++    else if (railwayA3PendingCellId_ == sourceId) {
++        cancelEvent(handoverStarter_);
++        railwayA3PendingCellId_ = NODEID_NONE;
++        binder_->removeHandoverTriggered(nodeId_);
++    }
++}
++
+ void LtePhyUe::findCandidateEnb(MacNodeId& outCandidateMasterId, double& outCandidateMasterRssi)
+ {
+     // this is a fictitious frame that needs to compute the SINR
+@@ -197,6 +341,14 @@
+     frame->setControlInfo(lteInfo);
+     double rssi = 0;
+ 
++    if (railwayA3TttHandover_) {
++        double rsrp = computeMeanRsrp(frame, lteInfo);
++        EV << "UE " << nodeId_ << " broadcast frame from " << lteInfo->getSourceId() << " with RSRP: " << rsrp << " at " << simTime() << endl;
++        handleRailwayA3Handover(lteInfo->getSourceId(), rsrp);
++        delete frame;
++        return;
++    }
++
+     // Compute RSSI from broadcast message (DAS removed - single antenna)
+     std::vector<double> rssiV = primaryChannelModel_->getSINR(frame, lteInfo);
+     for (auto value : rssiV)
+@@ -350,6 +502,9 @@
+     MacNodeId oldMaster = masterId_;
+     masterId_ = candidateMasterId_;
+     mac_->doHandover(candidateMasterId_);  // do MAC operations for handover
++    lastHandoverTime_ = simTime();
++    railwayA3PendingCellId_ = NODEID_NONE;
++
+     currentMasterRssi_ = candidateMasterRssi_;
+     hysteresisTh_ = updateHysteresisTh(currentMasterRssi_);
+ 
+@@ -548,6 +703,8 @@
+         double distance = getRadioPosition().distance(masterPos);
+         emit(distanceSignal_, distance);
+     }
++
++    emitRailwayHandoverObservations();
+ }
+ 
+ double LtePhyUe::updateHysteresisTh(double v)
+diff -ruN orig/src/simu5g/stack/phy/LtePhyUe.h new/src/simu5g/stack/phy/LtePhyUe.h
+--- orig/src/simu5g/stack/phy/LtePhyUe.h	2026-06-03 15:06:21.754059000 +0800
++++ new/src/simu5g/stack/phy/LtePhyUe.h	2026-06-03 15:30:39.707618900 +0800
+@@ -43,6 +43,15 @@
+     /** Statistic for serving cell */
+     static simsignal_t servingCellSignal_;
+ 
++    /** Railway/RL handover observation statistics */
++    static simsignal_t servingRsrpSignal_;
++    static simsignal_t neighborRsrpSignal_;
++    static simsignal_t deltaRsrpSignal_;
++    static simsignal_t bestNeighborCellSignal_;
++    static simsignal_t uePositionXSignal_;
++    static simsignal_t ueSpeedSignal_;
++    static simsignal_t timeSinceLastHandoverSignal_;
++
+     /** Self message to trigger handover procedure evaluation */
+     cMessage *handoverStarter_ = nullptr;
+ 
+@@ -82,6 +91,19 @@
+     // TODO: bring it to ned par!
+     double handoverDelta_ = 0.00001;
+ 
++    /**
++     * Optional railway-oriented A3 + TTT controller.
++     * Disabled by default to preserve the original Simu5G behavior.
++     */
++    bool railwayA3TttHandover_ = false;
++    double railwayA3HysteresisDb_ = 3.0;
++    double railwayA3TimeToTrigger_ = 0.16;
++    double railwayA3MinNeighborRsrpDb_ = -130.0;
++    MacNodeId railwayA3PendingCellId_ = NODEID_NONE;
++
++    /** Time when the last handover was completed. */
++    simtime_t lastHandoverTime_ = 0;
++
+     // Time for completion of the handover procedure
+     double handoverLatency_;
+     double handoverDetachment_;
+@@ -124,11 +146,16 @@
+ 
+     void emitMobilityStats() override;
+ 
++    void emitRailwayHandoverObservations();
++
+     /**
+      * Utility function to update the hysteresis threshold using hysteresisFactor_.
+      */
+     double updateHysteresisTh(double v);
+ 
++    double computeMeanRsrp(LteAirFrame *frame, UserControlInfo *lteInfo);
++    void handleRailwayA3Handover(MacNodeId sourceId, double sourceRsrp);
++
+     void handoverHandler(LteAirFrame *frame, UserControlInfo *lteInfo);
+ 
+     void deleteOldBuffers(MacNodeId masterId);
+diff -ruN orig/src/simu5g/stack/phy/LtePhyUe.ned new/src/simu5g/stack/phy/LtePhyUe.ned
+--- orig/src/simu5g/stack/phy/LtePhyUe.ned	2026-06-03 15:06:21.758058300 +0800
++++ new/src/simu5g/stack/phy/LtePhyUe.ned	2026-06-03 15:30:47.231743000 +0800
+@@ -41,16 +41,46 @@
+ 
+         bool hasCollector = default(false); // true when node has a collector module (ueCollector/nrUeCollector) for this PHY module
+ 
++        // Railway/RL handover extensions. Defaults preserve the original Simu5G behavior.
++        double hysteresisFactor = default(10);
++        double handoverDelta @unit(s) = default(0.00001s);
++        bool railwayA3TttHandover = default(false);
++        double railwayA3Hysteresis @unit(dB) = default(3dB);
++        double railwayA3TimeToTrigger @unit(s) = default(0.16s);
++        double railwayA3MinNeighborRsrp @unit(dB) = default(-130dB);
++
++        //# Mobility and serving-cell statistics
+         @signal[distance];
+         @statistic[distance](title="distance between UE and serving base station"; unit="meters"; source="distance"; record=mean,vector);
+ 
+         @signal[servingCell];
+         @statistic[servingCell](title="ID of the serving cell for the UE"; unit=""; source="servingCell"; record=vector);
+ 
++        //# Railway/RL handover observation statistics
++        @signal[servingRsrp];
++        @statistic[servingRsrp](title="RSRP from the serving cell"; unit="dB"; source="servingRsrp"; record=mean,vector);
++
++        @signal[neighborRsrp];
++        @statistic[neighborRsrp](title="RSRP from the strongest non-serving cell"; unit="dB"; source="neighborRsrp"; record=mean,vector);
++
++        @signal[deltaRsrp];
++        @statistic[deltaRsrp](title="neighborRsrp minus servingRsrp"; unit="dB"; source="deltaRsrp"; record=mean,vector);
++
++        @signal[bestNeighborCell];
++        @statistic[bestNeighborCell](title="ID of the strongest non-serving cell"; unit=""; source="bestNeighborCell"; record=vector);
++
++        @signal[uePositionX];
++        @statistic[uePositionX](title="UE x coordinate"; unit="m"; source="uePositionX"; record=mean,vector);
++
++        @signal[ueSpeed];
++        @statistic[ueSpeed](title="UE speed magnitude"; unit="mps"; source="ueSpeed"; record=mean,vector);
++
++        @signal[timeSinceLastHandover];
++        @statistic[timeSinceLastHandover](title="time elapsed since the last completed handover"; unit="s"; source="timeSinceLastHandover"; record=mean,vector);
++
+         //# CQI statistics
+         @signal[averageCqiDl];
+         @statistic[averageCqiDl](title="Average Cqi reported in DL"; unit="cqi"; source="averageCqiDl"; record=mean,count,vector);
+         @signal[averageCqiUl];
+         @statistic[averageCqiUl](title="Average Cqi reported in UL"; unit="cqi"; source="averageCqiUl"; record=mean,count,vector);
+ }
+-
+diff -ruN orig/src/simu5g/stack/phy/NrPhyUe.cc new/src/simu5g/stack/phy/NrPhyUe.cc
+--- orig/src/simu5g/stack/phy/NrPhyUe.cc	2026-06-03 15:06:21.761060400 +0800
++++ new/src/simu5g/stack/phy/NrPhyUe.cc	2026-06-03 15:13:29.467884600 +0800
+@@ -327,6 +327,9 @@
+     MacNodeId oldMaster = masterId_;
+     masterId_ = candidateMasterId_;
+     mac_->doHandover(candidateMasterId_);  // do MAC operations for handover
++    lastHandoverTime_ = simTime();
++    railwayA3PendingCellId_ = NODEID_NONE;
++
+     currentMasterRssi_ = candidateMasterRssi_;
+     hysteresisTh_ = updateHysteresisTh(currentMasterRssi_);
+ 

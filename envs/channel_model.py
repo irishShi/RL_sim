@@ -105,7 +105,8 @@ class ChannelModel:
     def _basic_pathloss_db(self, d_m: float, is_cell_A: bool) -> float:
         """基础路径损耗模型（对数距离模型，可视作 38.901 中 PL0 + 10nlog10(d/d0) 的简化）"""
         d0 = 1.0  # 参考1米
-        d = max(d_m, d0)
+        min_link_distance_m = float(self.cfg.get("min_link_distance_m", d0))
+        d = max(d_m, d0, min_link_distance_m)
 
         if is_cell_A:
             pl0 = self.cfg["pl0_A_db"]
@@ -115,6 +116,25 @@ class ChannelModel:
             n = self.cfg["pathloss_exp_B"]
 
         return pl0 + 10 * n * np.log10(d / d0)
+
+    def _effective_link_distance_m(self, along_track_distance_m: float) -> float:
+        """计算链路有效距离，可选使用轨旁三维几何。
+
+        默认保持旧的一维距离模型。若配置轨旁横向距离或天线高度，则按
+        sqrt(x^2 + lateral^2 + height_delta^2) 计算斜距，用于等效表示基站
+        位于轨旁、天线与车顶终端存在高度差的高速铁路场景。
+        """
+        d_along = max(float(along_track_distance_m), 0.0)
+        lateral = float(self.cfg.get("trackside_offset_m", 0.0))
+        bs_height = float(self.cfg.get("bs_height_m", 0.0))
+        ue_height = float(self.cfg.get("ue_height_m", 0.0))
+        height_delta = bs_height - ue_height
+        if lateral > 0.0 or height_delta != 0.0:
+            d_3d = np.sqrt(d_along ** 2 + lateral ** 2 + height_delta ** 2)
+        else:
+            d_3d = d_along
+        min_link_distance_m = float(self.cfg.get("min_link_distance_m", 1.0))
+        return float(max(d_3d, min_link_distance_m))
 
     def pathloss_db(self, x_m: float, d_m: float, is_cell_A: bool) -> float:
         """
@@ -184,8 +204,8 @@ class ChannelModel:
         """
         D = self.cfg["track_length_m"]
         # 基站 A 在 0，B 在 D
-        d_A = max(x_m - 0.0, 1.0)
-        d_B = max(D - x_m, 1.0)
+        d_A = self._effective_link_distance_m(x_m - 0.0)
+        d_B = self._effective_link_distance_m(D - x_m)
 
         # 1) 路径损耗（包含阴影 + 可选快衰落）
         pl_A = self.pathloss_db(x_m, d_A, is_cell_A=True)
@@ -196,6 +216,11 @@ class ChannelModel:
         Ptx_B = self.cfg["Ptx_B_dbm"]
         rsrp_A = Ptx_A - pl_A
         rsrp_B = Ptx_B - pl_B
+        max_rsrp_dbm = self.cfg.get("max_rsrp_dbm", None)
+        if max_rsrp_dbm is not None:
+            max_rsrp_dbm = float(max_rsrp_dbm)
+            rsrp_A = min(rsrp_A, max_rsrp_dbm)
+            rsrp_B = min(rsrp_B, max_rsrp_dbm)
 
         # 3) 噪声功率
         noise_dbm = self.cfg["noise_dbm"]
@@ -214,15 +239,18 @@ class ChannelModel:
         use_dynamic_interference = self.cfg.get("use_dynamic_interference", True)
         
         if use_dynamic_interference:
+            dynamic_interference_attenuation_db = float(
+                self.cfg.get("dynamic_interference_attenuation_db", 0.0)
+            )
             # 根据公式：同频干扰 = 10^(Pr1/10) + 10^(Pr2/10)
             # 对于基站A：干扰来自基站B的信号（Pr2 = rsrp_B）
             # 对于基站B：干扰来自基站A的信号（Pr1 = rsrp_A）
             
             # 基站A受到的干扰 = 基站B的信号功率（线性域）
-            interference_A_mw = dbm_to_mw(rsrp_B)
+            interference_A_mw = dbm_to_mw(rsrp_B - dynamic_interference_attenuation_db)
             
             # 基站B受到的干扰 = 基站A的信号功率（线性域）
-            interference_B_mw = dbm_to_mw(rsrp_A)
+            interference_B_mw = dbm_to_mw(rsrp_A - dynamic_interference_attenuation_db)
             
             # 如果配置了额外的同频基站干扰，可以叠加
             if self.cfg.get("enable_extra_interference", False):

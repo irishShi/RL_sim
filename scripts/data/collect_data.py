@@ -8,6 +8,8 @@ import os
 import sys
 import numpy as np
 import yaml
+import json
+from collections import Counter
 from typing import Dict, List, Optional
 import argparse
 from tqdm import tqdm
@@ -18,7 +20,7 @@ if PROJECT_ROOT not in sys.path:
 
 from envs.train_ho_env import TrainHandoverEnv
 from models import ActionSpace, ObservationWindow
-from utils import ActionHoldController, NStepBuffer
+from utils import ActionHoldController, NStepBuffer, ScenarioProfileSampler
 
 
 def normalize_delta_rsrp(delta_rsrp_dbm: float, delta_min: float = -30.0, delta_max: float = 30.0) -> float:
@@ -31,7 +33,9 @@ class DataCollector:
     
     def __init__(self, env: TrainHandoverEnv, action_space: ActionSpace,
                  obs_window: ObservationWindow, n_step_buffer: NStepBuffer,
-                 config: Dict, action_hold_steps: int = 0):
+                 config: Dict, action_hold_steps: int = 0,
+                 scenario_profile_sampler: Optional[ScenarioProfileSampler] = None,
+                 profile_seed_offset: int = 1000000):
         """
         Args:
             env: 环境实例
@@ -47,6 +51,10 @@ class DataCollector:
         self.n_step_buffer = n_step_buffer
         self.config = config
         self.action_hold_steps = action_hold_steps
+        self.scenario_profile_sampler = scenario_profile_sampler
+        self.profile_seed_offset = int(profile_seed_offset)
+        self.profile_episode_metadata = []
+        self.base_env_config = dict(env.cfg)
         
         self.window_size = config['observation']['window_size']
         self.obs_dim = config['observation']['obs_dim']
@@ -175,8 +183,9 @@ class DataCollector:
         if 'reward_ho_scale' in selected:
             self.env.cfg['reward_ho_scale'] = float(selected['reward_ho_scale'])
         
-    def collect_episode(self, policy_type: str = 'random', epsilon: float = 1.0, 
-                       seed: Optional[int] = None) -> List[Dict]:
+    def collect_episode(self, policy_type: str = 'random', epsilon: float = 1.0,
+                       seed: Optional[int] = None,
+                       env_config_override: Optional[Dict] = None) -> List[Dict]:
         """
         收集一个episode的数据
         
@@ -189,6 +198,11 @@ class DataCollector:
             experiences: 经验列表
         """
         # 重置环境
+        if env_config_override is not None:
+            self.env.cfg.update(env_config_override)
+            self.env.channel_model.cfg = self.env.cfg
+            self.env.ho_logic.cfg = self.env.cfg
+
         obs_raw, info = self.env.reset(seed=seed)
         self.obs_window.reset()
         self.obs_window.update_time(0.0)
@@ -338,15 +352,40 @@ class DataCollector:
             dataset: 数据集字典
         """
         all_experiences = []
+        profile_counter = Counter()
+        self.profile_episode_metadata = []
         
         print(f"开始收集数据...")
         print(f"策略类型: {policy_type}")
         print(f"Episode数量: {num_episodes}")
+        if self.scenario_profile_sampler is not None:
+            print("场景 profile 采样权重:")
+            for name, weight in self.scenario_profile_sampler.describe()["weights"].items():
+                print(f"  {name}: {weight:.3f}")
         
         for episode in tqdm(range(num_episodes), desc="收集数据"):
             self._apply_reward_phase_for_episode(episode, num_episodes)
             seed = seed_start + episode if seed_start is not None else None
-            experiences = self.collect_episode(policy_type, epsilon, seed)
+            env_config_override = None
+            if self.scenario_profile_sampler is not None:
+                profile_seed = self.profile_seed_offset + (seed if seed is not None else episode)
+                env_config_override, profile_metadata = self.scenario_profile_sampler.build_config(
+                    self.base_env_config,
+                    seed=profile_seed,
+                )
+                profile_metadata.update({
+                    "episode": int(episode),
+                    "env_seed": None if seed is None else int(seed),
+                })
+                profile_counter[profile_metadata["profile_name"]] += 1
+                self.profile_episode_metadata.append(profile_metadata)
+
+            experiences = self.collect_episode(
+                policy_type,
+                epsilon,
+                seed,
+                env_config_override=env_config_override,
+            )
             all_experiences.extend(experiences)
         
         # 转换为numpy数组
@@ -373,13 +412,19 @@ class DataCollector:
             'delta_targets': delta_targets,
             'num_samples': num_samples,
             'policy_type': policy_type,
-            'config': self.config
+            'config': self.config,
+            'profile_metadata': {
+                'enabled': self.scenario_profile_sampler is not None,
+                'profile_counts': dict(profile_counter),
+                'episodes': self.profile_episode_metadata,
+                'sampler': self.scenario_profile_sampler.describe() if self.scenario_profile_sampler else None,
+            }
         }
         
         return dataset
 
 
-def save_dataset(dataset: Dict, save_path: str):
+def save_dataset(dataset: Dict, save_path: str, save_profile_metadata: bool = False):
     """保存数据集"""
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     
@@ -400,6 +445,18 @@ def save_dataset(dataset: Dict, save_path: str):
     print(f"  样本数: {dataset['num_samples']}")
     print(f"  观测形状: {dataset['obs'].shape}")
     print(f"  动作形状: {dataset['actions'].shape}")
+    if save_profile_metadata and dataset.get('profile_metadata', {}).get('enabled', False):
+        metadata_path = os.path.splitext(save_path)[0] + ".metadata.json"
+        payload = {
+            "dataset_path": os.path.abspath(save_path),
+            "num_samples": int(dataset['num_samples']),
+            "obs_shape": list(dataset['obs'].shape),
+            "policy_type": str(dataset['policy_type']),
+            "profile_metadata": dataset.get('profile_metadata', {}),
+        }
+        with open(metadata_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2, ensure_ascii=False)
+        print(f"  场景 profile metadata 已保存: {metadata_path}")
 
 
 def main():
@@ -418,6 +475,12 @@ def main():
     parser.add_argument('--seed_start', type=int, default=0, help='起始随机种子')
     parser.add_argument('--action_hold_steps', type=int, default=0,
                        help='动作保持步数（0=根据TTT自适应，>0=固定步数）')
+    parser.add_argument('--scenario_profiles_path', type=str, default=None,
+                       help='场景 profile YAML 路径；不指定则保持单一默认环境')
+    parser.add_argument('--profile_split', type=str, default='train',
+                       help='使用的场景 profile split，默认 train')
+    parser.add_argument('--save_profile_metadata', action='store_true',
+                       help='保存与数据集同名的 .metadata.json，记录每个 episode 的 profile')
     
     args = parser.parse_args()
     
@@ -451,9 +514,23 @@ def main():
         gamma=model_config['training']['gamma']
     )
     
+    scenario_profile_sampler = None
+    if args.scenario_profiles_path:
+        profiles_path = args.scenario_profiles_path
+        if not os.path.isabs(profiles_path):
+            profiles_path = os.path.join(base_dir, profiles_path)
+        scenario_profile_sampler = ScenarioProfileSampler(profiles_path, split=args.profile_split)
+
     # 4. 创建数据收集器
-    collector = DataCollector(env, action_space, obs_window, n_step_buffer, model_config,
-                              action_hold_steps=args.action_hold_steps)
+    collector = DataCollector(
+        env,
+        action_space,
+        obs_window,
+        n_step_buffer,
+        model_config,
+        action_hold_steps=args.action_hold_steps,
+        scenario_profile_sampler=scenario_profile_sampler,
+    )
     
     # 5. 收集数据
     dataset = collector.collect_dataset(
@@ -465,7 +542,7 @@ def main():
     
     # 6. 保存数据集
     output_path = os.path.join(base_dir, args.output_path)
-    save_dataset(dataset, output_path)
+    save_dataset(dataset, output_path, save_profile_metadata=args.save_profile_metadata)
     
     print("\n" + "=" * 80)
     print("数据收集完成！")

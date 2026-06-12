@@ -6,20 +6,56 @@
 
 ## 1. 收集离线数据
 
+快速 smoke 可以使用较少 episode：
+
 ```bash
 python scripts/data/collect_data.py --num_episodes 100 --output_path data/datasets/offline_dataset.npz
 ```
 
-输出数据集：
+当前推荐 V1 domain random Obs7 数据集使用完整命令：
+
+```powershell
+.\.venv\Scripts\python.exe scripts\data\collect_data.py `
+  --num_episodes 500 `
+  --output_path data/datasets/offline_dataset_v1_domain_random_obs7_seed20260604.npz `
+  --policy_type stratified `
+  --scenario_profiles_path configs/scenario_profiles.yaml `
+  --profile_split train `
+  --save_profile_metadata `
+  --seed_start 2026060400 `
+  --action_hold_steps 0
+```
+
+推荐输出数据集：
 
 ```text
-data/datasets/offline_dataset.npz
+data/datasets/offline_dataset_v1_domain_random_obs7_seed20260604.npz
 ```
 
 ## 2. 离线训练
 
+快速 smoke 可以使用临时数据集：
+
 ```bash
-python scripts/train/train_rainbow_offline.py --dataset_path data/datasets/offline_dataset.npz --use_cql
+python scripts/train/train_rainbow_offline.py --dataset_path data/datasets/offline_dataset.npz --no_cql
+```
+
+当前推荐基线训练使用 `--no_cql`：
+
+```powershell
+.\.venv\Scripts\python.exe scripts\train\train_rainbow_offline.py `
+  --dataset_path data/datasets/offline_dataset_v1_domain_random_obs7_seed20260604.npz `
+  --no_cql `
+  --num_epochs 120 `
+  --samples_per_epoch 12000 `
+  --batch_size 64 `
+  --amp `
+  --val_ratio 0.05 `
+  --early_stop_on val `
+  --early_stop_patience 18 `
+  --early_stop_min_delta 0.001 `
+  --seed 20260604 `
+  --run_dir experiments/runs/20260604_v1_domain_random_obs7_nocql_seed20260604
 ```
 
 训练输出默认进入新的实验目录：
@@ -37,22 +73,27 @@ experiments/runs/YYYYMMDD_HHMMSS_rainbow_offline_seed2026/
 ```bash
 python scripts/train/train_rainbow_offline.py \
   --dataset_path data/datasets/offline_dataset.npz \
-  --use_cql \
-  --run_dir experiments/runs/20260601_rainbow_cql_seed2026
+  --no_cql \
+  --run_dir experiments/runs/YYYYMMDD_rainbow_obs7_nocql_seed2026
 ```
 
 ## 3. 评估模型
 
 单场景对比：
 
-```bash
-python scripts/eval/test_simple.py
+```powershell
+.\.venv\Scripts\python.exe scripts\eval\test_simple.py `
+  --checkpoint_path experiments/runs/20260604_v1_domain_random_obs7_nocql_seed20260604/checkpoints/rainbow_offline_best.pth
 ```
 
-批量对比：
+profile holdout 泛化：
 
-```bash
-python scripts/eval/test_batch_comparison.py
+```powershell
+.\.venv\Scripts\python.exe scripts\eval\test_profile_generalization.py `
+  --checkpoint_path experiments/runs/20260604_v1_domain_random_obs7_nocql_seed20260604/checkpoints/rainbow_offline_best.pth `
+  --scenario_profiles_path configs/scenario_profiles.yaml `
+  --profile_split test `
+  --num_seeds 20
 ```
 
 整理前的历史模型位于：

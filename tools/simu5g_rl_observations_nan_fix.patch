@@ -1,0 +1,28 @@
+diff -ruN v1/src/simu5g/stack/phy/LtePhyUe.cc new/src/simu5g/stack/phy/LtePhyUe.cc
+--- v1/src/simu5g/stack/phy/LtePhyUe.cc	2026-06-03 15:13:05.710788900 +0800
++++ new/src/simu5g/stack/phy/LtePhyUe.cc	2026-06-03 15:20:14.289220900 +0800
+@@ -11,6 +11,7 @@
+ //
+ 
+ #include <assert.h>
++#include <cmath>
+ #include "simu5g/stack/phy/LtePhyUe.h"
+ #include "simu5g/stack/phy/NrPhyUe.h"
+ #include "simu5g/stack/ip2nic/Ip2Nic.h"
+@@ -151,9 +152,14 @@
+         return -999.0;
+ 
+     double rsrp = 0;
+-    for (auto value : rsrpVector)
++    unsigned int validValues = 0;
++    for (auto value : rsrpVector) {
++        if (!std::isfinite(value))
++            continue;
+         rsrp += value;
+-    return rsrp / rsrpVector.size();
++        validValues++;
++    }
++    return validValues == 0 ? -999.0 : rsrp / validValues;
+ }
+ 
+ void LtePhyUe::emitRailwayHandoverObservations()

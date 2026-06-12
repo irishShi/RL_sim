@@ -1,4 +1,8 @@
-# Rainbow DQN 模型训练指南
+# Rainbow DQN 模型训练指南（历史草稿）
+
+> 状态说明：本文是早期训练架构草稿，保留用于理解项目演进。其中“环境包装器”“当前环境只支持 2 个动作”“训练循环待实现”等表述已经过时。当前主线请使用 [README_TRAINING.md](README_TRAINING.md) 和 [../design/README_MODEL.md](../design/README_MODEL.md)。
+
+> 当前实现已原生支持 48 个 A3 `(Hys, TTT)` 动作，模型输入固定为 `[15, 7]`，训练、评估和 policy table 导出链路均已实现。
 
 本文档基于当前项目代码，提供完整的训练流程建议和实现方案。
 

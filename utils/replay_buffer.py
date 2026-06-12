@@ -8,7 +8,7 @@ class ReplayBuffer:
     """经验回放缓冲区（支持优先经验回放 PER）"""
     
     def __init__(self, capacity: int, obs_window_size: int, obs_dim: int, 
-                 per_alpha: float = 0.6):
+                 per_alpha: float = 0.6, num_risk_horizons: int = 0):
         """
         Args:
             capacity: 缓冲区容量
@@ -20,6 +20,7 @@ class ReplayBuffer:
         self.obs_window_size = obs_window_size
         self.obs_dim = obs_dim
         self.per_alpha = per_alpha
+        self.num_risk_horizons = int(num_risk_horizons)
         
         # 存储的数据
         self.obs_windows = np.zeros((capacity, obs_window_size, obs_dim), dtype=np.float32)
@@ -28,6 +29,12 @@ class ReplayBuffer:
         self.next_obs_windows = np.zeros((capacity, obs_window_size, obs_dim), dtype=np.float32)
         self.dones = np.zeros(capacity, dtype=bool)
         self.delta_rsrp_targets = np.zeros(capacity, dtype=np.float32)  # 辅助预测目标
+        if self.num_risk_horizons > 0:
+            self.future_risk_labels = np.zeros((capacity, self.num_risk_horizons), dtype=np.float32)
+            self.future_risk_weights = np.zeros((capacity, self.num_risk_horizons), dtype=np.float32)
+        else:
+            self.future_risk_labels = None
+            self.future_risk_weights = None
         
         # PER 相关
         self.priorities = np.zeros(capacity)
@@ -37,7 +44,9 @@ class ReplayBuffer:
         self.size = 0
     
     def store(self, obs_window: np.ndarray, action: int, reward: float,
-              next_obs_window: np.ndarray, done: bool, delta_rsrp_target: float):
+              next_obs_window: np.ndarray, done: bool, delta_rsrp_target: float,
+              future_risk_label: Optional[np.ndarray] = None,
+              future_risk_weight: Optional[np.ndarray] = None):
         """存储一条经验"""
         idx = self.pos % self.capacity
         
@@ -47,6 +56,11 @@ class ReplayBuffer:
         self.next_obs_windows[idx] = next_obs_window
         self.dones[idx] = done
         self.delta_rsrp_targets[idx] = delta_rsrp_target
+        if self.num_risk_horizons > 0 and self.future_risk_labels is not None:
+            if future_risk_label is not None:
+                self.future_risk_labels[idx] = future_risk_label
+            if future_risk_weight is not None and self.future_risk_weights is not None:
+                self.future_risk_weights[idx] = future_risk_weight
         
         # PER: 新样本优先级最高
         self.priorities[idx] = self.max_priority
@@ -66,6 +80,24 @@ class ReplayBuffer:
         self.next_obs_windows[:num] = dataset['next_obs'][:num]
         self.dones[:num] = dataset['dones'][:num]
         self.delta_rsrp_targets[:num] = dataset['delta_targets'][:num]
+        if self.num_risk_horizons > 0 and self.future_risk_labels is not None:
+            if 'future_risk_labels' in dataset:
+                labels = dataset['future_risk_labels'][:num]
+                if labels.shape[1] != self.num_risk_horizons:
+                    raise ValueError(
+                        f"风险标签 horizon 数不匹配: {labels.shape[1]} != {self.num_risk_horizons}"
+                    )
+                self.future_risk_labels[:num] = labels
+            if self.future_risk_weights is not None:
+                if 'future_risk_weights' in dataset:
+                    weights = dataset['future_risk_weights'][:num]
+                    if weights.shape[1] != self.num_risk_horizons:
+                        raise ValueError(
+                            f"风险权重 horizon 数不匹配: {weights.shape[1]} != {self.num_risk_horizons}"
+                        )
+                    self.future_risk_weights[:num] = weights
+                else:
+                    self.future_risk_weights[:num] = 1.0
 
         self.priorities[:num] = self.max_priority
         self.pos = num % self.capacity
@@ -107,6 +139,13 @@ class ReplayBuffer:
             'weights': weights.astype(np.float32),
             'indices': indices
         }
+        if self.num_risk_horizons > 0 and self.future_risk_labels is not None:
+            batch['future_risk_label'] = self.future_risk_labels[indices]
+            batch['future_risk_weight'] = (
+                self.future_risk_weights[indices]
+                if self.future_risk_weights is not None
+                else np.ones((len(indices), self.num_risk_horizons), dtype=np.float32)
+            )
         
         return batch
     

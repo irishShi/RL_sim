@@ -1,0 +1,172 @@
+--- omnetpp.ini.pre_complex_matrix	2026-06-04 12:34:10.471972500 +0800
++++ omnetpp.ini	2026-06-04 12:33:22.823727100 +0800
+@@ -321,4 +321,168 @@
+ **.cellularNic.nrPhy.railwayPolicyTablePath = "/mnt/c/Users/qichengshi/Desktop/RL_sim/results/policy_tables/policy_table.csv"
+ **.cellularNic.nrPhy.railwayPolicyUpdateInterval = 0.05s
+ **.cellularNic.nrPhy.railwayPolicyNoise = -96dBm
+-
++
++#------------------------------------#
++# Complex railway matrix: each stress scenario is evaluated with a fixed A3
++# baseline and with the exported RL policy table.
++
++[Config Railway-300-DL-TrackOffset-FixedA3]
++extends = Railway-300-DL-TrackOffset
++description = "Complex matrix / TrackOffset / fixed A3+TTT baseline"
++result-dir = results/RailwayComplexMatrix
++**.cellularNic.nrPhy.railwayA3TttHandover = true
++**.cellularNic.nrPhy.railwayA3Hysteresis = 3dB
++**.cellularNic.nrPhy.railwayA3TimeToTrigger = 0.16s
++**.cellularNic.nrPhy.railwayA3MinNeighborRsrp = -130dB
++**.cellularNic.nrPhy.railwayPolicyTableEnabled = false
++
++[Config Railway-300-DL-TrackOffset-RLTable]
++extends = Railway-300-DL-TrackOffset
++description = "Complex matrix / TrackOffset / RL policy table"
++result-dir = results/RailwayComplexMatrix
++**.cellularNic.nrPhy.railwayA3TttHandover = true
++**.cellularNic.nrPhy.railwayA3Hysteresis = 3dB
++**.cellularNic.nrPhy.railwayA3TimeToTrigger = 0.16s
++**.cellularNic.nrPhy.railwayA3MinNeighborRsrp = -130dB
++**.cellularNic.nrPhy.railwayPolicyTableEnabled = true
++**.cellularNic.nrPhy.railwayPolicyTablePath = "/mnt/c/Users/qichengshi/Desktop/RL_sim/results/policy_tables/policy_table.csv"
++**.cellularNic.nrPhy.railwayPolicyUpdateInterval = 0.05s
++**.cellularNic.nrPhy.railwayPolicyNoise = -96dBm
++
++[Config Railway-300-DL-WeakCoverage-FixedA3]
++extends = Railway-300-DL-WeakCoverage
++description = "Complex matrix / WeakCoverage / fixed A3+TTT baseline"
++result-dir = results/RailwayComplexMatrix
++**.cellularNic.nrPhy.railwayA3TttHandover = true
++**.cellularNic.nrPhy.railwayA3Hysteresis = 3dB
++**.cellularNic.nrPhy.railwayA3TimeToTrigger = 0.16s
++**.cellularNic.nrPhy.railwayA3MinNeighborRsrp = -130dB
++**.cellularNic.nrPhy.railwayPolicyTableEnabled = false
++
++[Config Railway-300-DL-WeakCoverage-RLTable]
++extends = Railway-300-DL-WeakCoverage
++description = "Complex matrix / WeakCoverage / RL policy table"
++result-dir = results/RailwayComplexMatrix
++**.cellularNic.nrPhy.railwayA3TttHandover = true
++**.cellularNic.nrPhy.railwayA3Hysteresis = 3dB
++**.cellularNic.nrPhy.railwayA3TimeToTrigger = 0.16s
++**.cellularNic.nrPhy.railwayA3MinNeighborRsrp = -130dB
++**.cellularNic.nrPhy.railwayPolicyTableEnabled = true
++**.cellularNic.nrPhy.railwayPolicyTablePath = "/mnt/c/Users/qichengshi/Desktop/RL_sim/results/policy_tables/policy_table.csv"
++**.cellularNic.nrPhy.railwayPolicyUpdateInterval = 0.05s
++**.cellularNic.nrPhy.railwayPolicyNoise = -96dBm
++
++[Config Railway-300-DL-HighNoise-FixedA3]
++extends = Railway-300-DL-HighNoise
++description = "Complex matrix / HighNoise / fixed A3+TTT baseline"
++result-dir = results/RailwayComplexMatrix
++**.cellularNic.nrPhy.railwayA3TttHandover = true
++**.cellularNic.nrPhy.railwayA3Hysteresis = 3dB
++**.cellularNic.nrPhy.railwayA3TimeToTrigger = 0.16s
++**.cellularNic.nrPhy.railwayA3MinNeighborRsrp = -130dB
++**.cellularNic.nrPhy.railwayPolicyTableEnabled = false
++
++[Config Railway-300-DL-HighNoise-RLTable]
++extends = Railway-300-DL-HighNoise
++description = "Complex matrix / HighNoise / RL policy table"
++result-dir = results/RailwayComplexMatrix
++**.cellularNic.nrPhy.railwayA3TttHandover = true
++**.cellularNic.nrPhy.railwayA3Hysteresis = 3dB
++**.cellularNic.nrPhy.railwayA3TimeToTrigger = 0.16s
++**.cellularNic.nrPhy.railwayA3MinNeighborRsrp = -130dB
++**.cellularNic.nrPhy.railwayPolicyTableEnabled = true
++**.cellularNic.nrPhy.railwayPolicyTablePath = "/mnt/c/Users/qichengshi/Desktop/RL_sim/results/policy_tables/policy_table.csv"
++**.cellularNic.nrPhy.railwayPolicyUpdateInterval = 0.05s
++**.cellularNic.nrPhy.railwayPolicyNoise = -96dBm
++
++[Config Railway-300-DL-NlosFading-FixedA3]
++extends = Railway-300-DL-NlosFading
++description = "Complex matrix / NlosFading / fixed A3+TTT baseline"
++result-dir = results/RailwayComplexMatrix
++**.cellularNic.nrPhy.railwayA3TttHandover = true
++**.cellularNic.nrPhy.railwayA3Hysteresis = 3dB
++**.cellularNic.nrPhy.railwayA3TimeToTrigger = 0.16s
++**.cellularNic.nrPhy.railwayA3MinNeighborRsrp = -130dB
++**.cellularNic.nrPhy.railwayPolicyTableEnabled = false
++
++[Config Railway-300-DL-NlosFading-RLTable]
++extends = Railway-300-DL-NlosFading
++description = "Complex matrix / NlosFading / RL policy table"
++result-dir = results/RailwayComplexMatrix
++**.cellularNic.nrPhy.railwayA3TttHandover = true
++**.cellularNic.nrPhy.railwayA3Hysteresis = 3dB
++**.cellularNic.nrPhy.railwayA3TimeToTrigger = 0.16s
++**.cellularNic.nrPhy.railwayA3MinNeighborRsrp = -130dB
++**.cellularNic.nrPhy.railwayPolicyTableEnabled = true
++**.cellularNic.nrPhy.railwayPolicyTablePath = "/mnt/c/Users/qichengshi/Desktop/RL_sim/results/policy_tables/policy_table.csv"
++**.cellularNic.nrPhy.railwayPolicyUpdateInterval = 0.05s
++**.cellularNic.nrPhy.railwayPolicyNoise = -96dBm
++
++[Config Railway-300-DL-HighInterference-FixedA3]
++extends = Railway-300-DL-HighInterference
++description = "Complex matrix / HighInterference / fixed A3+TTT baseline"
++result-dir = results/RailwayComplexMatrix
++**.cellularNic.nrPhy.railwayA3TttHandover = true
++**.cellularNic.nrPhy.railwayA3Hysteresis = 3dB
++**.cellularNic.nrPhy.railwayA3TimeToTrigger = 0.16s
++**.cellularNic.nrPhy.railwayA3MinNeighborRsrp = -130dB
++**.cellularNic.nrPhy.railwayPolicyTableEnabled = false
++
++[Config Railway-300-DL-HighInterference-RLTable]
++extends = Railway-300-DL-HighInterference
++description = "Complex matrix / HighInterference / RL policy table"
++result-dir = results/RailwayComplexMatrix
++**.cellularNic.nrPhy.railwayA3TttHandover = true
++**.cellularNic.nrPhy.railwayA3Hysteresis = 3dB
++**.cellularNic.nrPhy.railwayA3TimeToTrigger = 0.16s
++**.cellularNic.nrPhy.railwayA3MinNeighborRsrp = -130dB
++**.cellularNic.nrPhy.railwayPolicyTableEnabled = true
++**.cellularNic.nrPhy.railwayPolicyTablePath = "/mnt/c/Users/qichengshi/Desktop/RL_sim/results/policy_tables/policy_table.csv"
++**.cellularNic.nrPhy.railwayPolicyUpdateInterval = 0.05s
++**.cellularNic.nrPhy.railwayPolicyNoise = -96dBm
++
++[Config Railway-300-DL-HeavyTraffic-FixedA3]
++extends = Railway-300-DL-HeavyTraffic
++description = "Complex matrix / HeavyTraffic / fixed A3+TTT baseline"
++result-dir = results/RailwayComplexMatrix
++**.cellularNic.nrPhy.railwayA3TttHandover = true
++**.cellularNic.nrPhy.railwayA3Hysteresis = 3dB
++**.cellularNic.nrPhy.railwayA3TimeToTrigger = 0.16s
++**.cellularNic.nrPhy.railwayA3MinNeighborRsrp = -130dB
++**.cellularNic.nrPhy.railwayPolicyTableEnabled = false
++
++[Config Railway-300-DL-HeavyTraffic-RLTable]
++extends = Railway-300-DL-HeavyTraffic
++description = "Complex matrix / HeavyTraffic / RL policy table"
++result-dir = results/RailwayComplexMatrix
++**.cellularNic.nrPhy.railwayA3TttHandover = true
++**.cellularNic.nrPhy.railwayA3Hysteresis = 3dB
++**.cellularNic.nrPhy.railwayA3TimeToTrigger = 0.16s
++**.cellularNic.nrPhy.railwayA3MinNeighborRsrp = -130dB
++**.cellularNic.nrPhy.railwayPolicyTableEnabled = true
++**.cellularNic.nrPhy.railwayPolicyTablePath = "/mnt/c/Users/qichengshi/Desktop/RL_sim/results/policy_tables/policy_table.csv"
++**.cellularNic.nrPhy.railwayPolicyUpdateInterval = 0.05s
++**.cellularNic.nrPhy.railwayPolicyNoise = -96dBm
++
++[Config Railway-300-DL-Stress-FixedA3]
++extends = Railway-300-DL-Stress
++description = "Complex matrix / Stress / fixed A3+TTT baseline"
++result-dir = results/RailwayComplexMatrix
++**.cellularNic.nrPhy.railwayA3TttHandover = true
++**.cellularNic.nrPhy.railwayA3Hysteresis = 3dB
++**.cellularNic.nrPhy.railwayA3TimeToTrigger = 0.16s
++**.cellularNic.nrPhy.railwayA3MinNeighborRsrp = -130dB
++**.cellularNic.nrPhy.railwayPolicyTableEnabled = false
++
++[Config Railway-300-DL-Stress-RLTable]
++extends = Railway-300-DL-Stress
++description = "Complex matrix / Stress / RL policy table"
++result-dir = results/RailwayComplexMatrix
++**.cellularNic.nrPhy.railwayA3TttHandover = true
++**.cellularNic.nrPhy.railwayA3Hysteresis = 3dB
++**.cellularNic.nrPhy.railwayA3TimeToTrigger = 0.16s
++**.cellularNic.nrPhy.railwayA3MinNeighborRsrp = -130dB
++**.cellularNic.nrPhy.railwayPolicyTableEnabled = true
++**.cellularNic.nrPhy.railwayPolicyTablePath = "/mnt/c/Users/qichengshi/Desktop/RL_sim/results/policy_tables/policy_table.csv"
++**.cellularNic.nrPhy.railwayPolicyUpdateInterval = 0.05s
++**.cellularNic.nrPhy.railwayPolicyNoise = -96dBm

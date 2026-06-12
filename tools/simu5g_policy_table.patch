@@ -1,0 +1,3103 @@
+--- src/simu5g/stack/phy/LtePhyUe.h.pre_policy_table	2026-06-04 11:25:37.845889200 +0800
++++ src/simu5g/stack/phy/LtePhyUe.h	2026-06-04 11:45:38.687276905 +0800
+@@ -1,192 +1,228 @@
+-//
+-//                  Simu5G
+-//
+-// Copyright (C) 2012-2021 Giovanni Nardini, Giovanni Stea, Antonio Virdis et al. (University of Pisa)
+-// Copyright (C) 2022-2026 Giovanni Nardini, Giovanni Stea et al. (University of Pisa)
+-//
+-// This file is part of a software released under the license included in file
+-// "license.pdf". Please read LICENSE and README files before using it.
+-// The above files and the present reference are part of the software itself,
+-// and cannot be removed from it.
+-//
+-
++//
++//                  Simu5G
++//
++// Copyright (C) 2012-2021 Giovanni Nardini, Giovanni Stea, Antonio Virdis et al. (University of Pisa)
++// Copyright (C) 2022-2026 Giovanni Nardini, Giovanni Stea et al. (University of Pisa)
++//
++// This file is part of a software released under the license included in file
++// "license.pdf". Please read LICENSE and README files before using it.
++// The above files and the present reference are part of the software itself,
++// and cannot be removed from it.
++//
++
+ #ifndef _LTE_AIRPHYUE_H_
+ #define _LTE_AIRPHYUE_H_
+ 
+-#include <inet/mobility/contract/IMobility.h>
+-
+-#include "simu5g/stack/ip2nic/Ip2Nic.h"
+-#include "simu5g/stack/phy/LtePhyBase.h"
+-#include "simu5g/stack/mac/LteMacUe.h"
+-#include "simu5g/stack/rlc/um/LteRlcUm.h"
+-#include "simu5g/stack/pdcp/LtePdcp.h"
+-#include "simu5g/stack/phy/feedback/LteDlFeedbackGenerator.h"
+-
+-namespace simu5g {
+-
+-using namespace omnetpp;
+-
+-class LteDlFeedbackGenerator;
++#include <string>
++#include <vector>
+ 
+-class LtePhyUe : public LtePhyBase
+-{
+-  protected:
+-    /** Master MacNodeId */
+-    MacNodeId masterId_ = NODEID_NONE;
+-
+-    /** Reference to master node's mobility module */
+-    opp_component_ptr<IMobility> masterMobility_;
+-
+-    /** Statistic for distance from serving cell */
+-    static simsignal_t distanceSignal_;
+-
+-    /** Statistic for serving cell */
+-    static simsignal_t servingCellSignal_;
+-
+-    /** Railway/RL handover observation statistics */
+-    static simsignal_t servingRsrpSignal_;
+-    static simsignal_t neighborRsrpSignal_;
++#include <inet/mobility/contract/IMobility.h>
++
++#include "simu5g/stack/ip2nic/Ip2Nic.h"
++#include "simu5g/stack/phy/LtePhyBase.h"
++#include "simu5g/stack/mac/LteMacUe.h"
++#include "simu5g/stack/rlc/um/LteRlcUm.h"
++#include "simu5g/stack/pdcp/LtePdcp.h"
++#include "simu5g/stack/phy/feedback/LteDlFeedbackGenerator.h"
++
++namespace simu5g {
++
++using namespace omnetpp;
++
++class LteDlFeedbackGenerator;
++
++class LtePhyUe : public LtePhyBase
++{
++  protected:
++    /** Master MacNodeId */
++    MacNodeId masterId_ = NODEID_NONE;
++
++    /** Reference to master node's mobility module */
++    opp_component_ptr<IMobility> masterMobility_;
++
++    /** Statistic for distance from serving cell */
++    static simsignal_t distanceSignal_;
++
++    /** Statistic for serving cell */
++    static simsignal_t servingCellSignal_;
++
++    /** Railway/RL handover observation statistics */
++    static simsignal_t servingRsrpSignal_;
++    static simsignal_t neighborRsrpSignal_;
+     static simsignal_t deltaRsrpSignal_;
++    static simsignal_t servingSinrSignal_;
+     static simsignal_t bestNeighborCellSignal_;
+     static simsignal_t uePositionXSignal_;
+     static simsignal_t ueSpeedSignal_;
+     static simsignal_t timeSinceLastHandoverSignal_;
+-
+-    /** Self message to trigger handover procedure evaluation */
+-    cMessage *handoverStarter_ = nullptr;
+-
+-    /** Self message to start the handover procedure */
+-    cMessage *handoverTrigger_ = nullptr;
+-
+-    /** RSSI received from the current serving node */
+-    double currentMasterRssi_;
+-
+-    /** ID of the not-master node from which the highest RSSI was received */
+-    MacNodeId candidateMasterId_;
+-
+-    /** Highest RSSI received from not-master node */
+-    double candidateMasterRssi_;
+-
+-    /**
+-     * Hysteresis threshold to evaluate handover: it introduces a small polarization to
+-     * avoid multiple subsequent handovers
+-     */
+-    double hysteresisTh_ = 0;
+-
+-    /**
+-     * Value used to divide currentMasterRssi_ and create a hysteresisTh_
+-     * Use zero to have hysteresisTh_ == 0.
+-     */
+-    // TODO: bring it to ned par!
+-    double hysteresisFactor_ = 10;
+-
+-    /**
+-     * Time interval elapsing from the reception of the first handover broadcast message
+-     * to the beginning of the handover procedure.
+-     * It must be a small number greater than 0 to ensure that all broadcast messages
+-     * are received before evaluating handover.
+-     * Note that broadcast messages for handover are always received at the very same time
+-     * (at bdcUpdateInterval_ seconds intervals).
+-     */
+-    // TODO: bring it to ned par!
+-    double handoverDelta_ = 0.00001;
+-
+-    /**
+-     * Optional railway-oriented A3 + TTT controller.
+-     * Disabled by default to preserve the original Simu5G behavior.
+-     */
++    static simsignal_t railwayPolicyActionSignal_;
++    static simsignal_t railwayPolicyHysSignal_;
++    static simsignal_t railwayPolicyTttSignal_;
++    static simsignal_t railwayPolicyQSignal_;
++
++    /** Self message to trigger handover procedure evaluation */
++    cMessage *handoverStarter_ = nullptr;
++
++    /** Self message to start the handover procedure */
++    cMessage *handoverTrigger_ = nullptr;
++
++    /** RSSI received from the current serving node */
++    double currentMasterRssi_;
++
++    /** ID of the not-master node from which the highest RSSI was received */
++    MacNodeId candidateMasterId_;
++
++    /** Highest RSSI received from not-master node */
++    double candidateMasterRssi_;
++
++    /**
++     * Hysteresis threshold to evaluate handover: it introduces a small polarization to
++     * avoid multiple subsequent handovers
++     */
++    double hysteresisTh_ = 0;
++
++    /**
++     * Value used to divide currentMasterRssi_ and create a hysteresisTh_
++     * Use zero to have hysteresisTh_ == 0.
++     */
++    // TODO: bring it to ned par!
++    double hysteresisFactor_ = 10;
++
++    /**
++     * Time interval elapsing from the reception of the first handover broadcast message
++     * to the beginning of the handover procedure.
++     * It must be a small number greater than 0 to ensure that all broadcast messages
++     * are received before evaluating handover.
++     * Note that broadcast messages for handover are always received at the very same time
++     * (at bdcUpdateInterval_ seconds intervals).
++     */
++    // TODO: bring it to ned par!
++    double handoverDelta_ = 0.00001;
++
++    /**
++     * Optional railway-oriented A3 + TTT controller.
++     * Disabled by default to preserve the original Simu5G behavior.
++     */
+     bool railwayA3TttHandover_ = false;
+     double railwayA3HysteresisDb_ = 3.0;
+     double railwayA3TimeToTrigger_ = 0.16;
+     double railwayA3MinNeighborRsrpDb_ = -130.0;
+     MacNodeId railwayA3PendingCellId_ = NODEID_NONE;
+ 
+-    /** Time when the last handover was completed. */
+-    simtime_t lastHandoverTime_ = 0;
+-
+-    // Time for completion of the handover procedure
+-    double handoverLatency_;
+-    double handoverDetachment_;
+-    double handoverAttachment_;
+-
+-    // Lower threshold of RSSI for detachment
+-    double minRssi_;
+-
+-    /**
+-     * Handover switch
+-     */
+-    bool enableHandover_;
+-
+-
+-    opp_component_ptr<LteMacUe> mac_;
+-    inet::ModuleRefByPar<LteRlcUm> rlcUm_;
+-    inet::ModuleRefByPar<LtePdcpBase> pdcp_;
+-    inet::ModuleRefByPar<Ip2Nic> ip2nic_;
+-    inet::ModuleRefByPar<LteDlFeedbackGenerator> fbGen_;
+-
+-    simtime_t lastFeedback_ = 0;
+-
+-    // Support to print average CQI at the end of the simulation
+-    std::vector<short int> cqiDlSamples_;
+-    std::vector<short int> cqiUlSamples_;
+-    unsigned int cqiDlSum_ = 0;
+-    unsigned int cqiUlSum_ = 0;
+-    unsigned int cqiDlCount_ = 0;
+-    unsigned int cqiUlCount_ = 0;
+-
+-    bool hasCollector = false;
+-
+-    void initialize(int stage) override;
+-    void handleSelfMessage(cMessage *msg) override;
+-    void handleAirFrame(cMessage *msg) override;
+-    void finish() override;
+-    void finish(cComponent *component, simsignal_t signalID) override { cIListener::finish(component, signalID); }
+-
+-    void handleUpperMessage(cMessage *msg) override;
+-
+-    void emitMobilityStats() override;
+-
++    struct RailwayPolicyTableEntry {
++        double positionM = 0.0;
++        double speedKmh = 0.0;
++        double rsrpServDbm = 0.0;
++        double deltaRsrpDb = 0.0;
++        double sinrDb = 0.0;
++        double timeSinceHoS = 0.0;
++        int actionId = -1;
++        double hysDb = 3.0;
++        double tttMs = 150.0;
++        double qValue = 0.0;
++    };
++
++    bool railwayPolicyTableEnabled_ = false;
++    std::string railwayPolicyTablePath_;
++    double railwayPolicyUpdateInterval_ = 0.05;
++    double railwayPolicyNoiseDbm_ = -96.0;
++    std::vector<RailwayPolicyTableEntry> railwayPolicyTable_;
++    simtime_t railwayPolicyLastUpdateTime_ = 0;
++    bool railwayPolicyHasLastUpdate_ = false;
++    int railwayPolicyLastActionId_ = -1;
++    double railwayPolicyLastQValue_ = 0.0;
++
++    /** Time when the last handover was completed. */
++    simtime_t lastHandoverTime_ = 0;
++
++    // Time for completion of the handover procedure
++    double handoverLatency_;
++    double handoverDetachment_;
++    double handoverAttachment_;
++
++    // Lower threshold of RSSI for detachment
++    double minRssi_;
++
++    /**
++     * Handover switch
++     */
++    bool enableHandover_;
++
++
++    opp_component_ptr<LteMacUe> mac_;
++    inet::ModuleRefByPar<LteRlcUm> rlcUm_;
++    inet::ModuleRefByPar<LtePdcpBase> pdcp_;
++    inet::ModuleRefByPar<Ip2Nic> ip2nic_;
++    inet::ModuleRefByPar<LteDlFeedbackGenerator> fbGen_;
++
++    simtime_t lastFeedback_ = 0;
++
++    // Support to print average CQI at the end of the simulation
++    std::vector<short int> cqiDlSamples_;
++    std::vector<short int> cqiUlSamples_;
++    unsigned int cqiDlSum_ = 0;
++    unsigned int cqiUlSum_ = 0;
++    unsigned int cqiDlCount_ = 0;
++    unsigned int cqiUlCount_ = 0;
++
++    bool hasCollector = false;
++
++    void initialize(int stage) override;
++    void handleSelfMessage(cMessage *msg) override;
++    void handleAirFrame(cMessage *msg) override;
++    void finish() override;
++    void finish(cComponent *component, simsignal_t signalID) override { cIListener::finish(component, signalID); }
++
++    void handleUpperMessage(cMessage *msg) override;
++
++    void emitMobilityStats() override;
++
+     void emitRailwayHandoverObservations();
+-
+-    /**
+-     * Utility function to update the hysteresis threshold using hysteresisFactor_.
+-     */
+-    double updateHysteresisTh(double v);
+-
+-    double computeMeanRsrp(LteAirFrame *frame, UserControlInfo *lteInfo);
+-    void handleRailwayA3Handover(MacNodeId sourceId, double sourceRsrp);
+-
+-    void handoverHandler(LteAirFrame *frame, UserControlInfo *lteInfo);
+-
+-    void deleteOldBuffers(MacNodeId masterId);
+-
+-    virtual void triggerHandover();
+-    virtual void doHandover();
+-
+-    virtual void findCandidateEnb(MacNodeId& outCandidateMasterId, double& outCandidateMasterRssi);
+-
+-  public:
+-    ~LtePhyUe() override;
+-    /**
+-     * Send feedback, called by feedback generator in DL
+-     */
+-    virtual void sendFeedback(LteFeedbackDoubleVector fbDl, LteFeedbackDoubleVector fbUl, FeedbackRequest req);
+-    MacNodeId getMasterId() const
+-    {
+-        return masterId_;
+-    }
+-
+-    simtime_t coherenceTime(double speed)
+-    {
+-        double fd = (speed / SPEED_OF_LIGHT) * carrierFrequency_;
+-        return 0.1 / fd;
+-    }
+-
+-    void recordCqi(unsigned int sample, Direction dir);
+-    double getAverageCqi(Direction dir);
+-    double getVarianceCqi(Direction dir);
+-};
+-
+-} //namespace
+-
+-#endif /* _LTE_AIRPHYUE_H_ */
++    void loadRailwayPolicyTable();
++    void updateRailwayPolicyFromTable(double positionM, double speedMps, double servingRsrpDbm,
++            double neighborRsrpDbm, double servingSinrDb, double timeSinceHoS);
++    double computeRailwayPolicySinrProxy(double servingRsrpDbm, double neighborRsrpDbm) const;
++
++    /**
++     * Utility function to update the hysteresis threshold using hysteresisFactor_.
++     */
++    double updateHysteresisTh(double v);
++
++    double computeMeanRsrp(LteAirFrame *frame, UserControlInfo *lteInfo);
++    void handleRailwayA3Handover(MacNodeId sourceId, double sourceRsrp);
++
++    void handoverHandler(LteAirFrame *frame, UserControlInfo *lteInfo);
++
++    void deleteOldBuffers(MacNodeId masterId);
++
++    virtual void triggerHandover();
++    virtual void doHandover();
++
++    virtual void findCandidateEnb(MacNodeId& outCandidateMasterId, double& outCandidateMasterRssi);
++
++  public:
++    ~LtePhyUe() override;
++    /**
++     * Send feedback, called by feedback generator in DL
++     */
++    virtual void sendFeedback(LteFeedbackDoubleVector fbDl, LteFeedbackDoubleVector fbUl, FeedbackRequest req);
++    MacNodeId getMasterId() const
++    {
++        return masterId_;
++    }
++
++    simtime_t coherenceTime(double speed)
++    {
++        double fd = (speed / SPEED_OF_LIGHT) * carrierFrequency_;
++        return 0.1 / fd;
++    }
++
++    void recordCqi(unsigned int sample, Direction dir);
++    double getAverageCqi(Direction dir);
++    double getVarianceCqi(Direction dir);
++};
++
++} //namespace
++
++#endif /* _LTE_AIRPHYUE_H_ */
++
+--- src/simu5g/stack/phy/LtePhyUe.cc.pre_policy_table	2026-06-04 11:25:37.845889200 +0800
++++ src/simu5g/stack/phy/LtePhyUe.cc	2026-06-04 11:45:38.687276905 +0800
+@@ -1,877 +1,1085 @@
+-//
+-//                  Simu5G
+-//
+-// Copyright (C) 2012-2021 Giovanni Nardini, Giovanni Stea, Antonio Virdis et al. (University of Pisa)
+-// Copyright (C) 2022-2026 Giovanni Nardini, Giovanni Stea et al. (University of Pisa)
+-//
+-// This file is part of a software released under the license included in file
+-// "license.pdf". Please read LICENSE and README files before using it.
+-// The above files and the present reference are part of the software itself,
+-// and cannot be removed from it.
+-//
+-
++//
++//                  Simu5G
++//
++// Copyright (C) 2012-2021 Giovanni Nardini, Giovanni Stea, Antonio Virdis et al. (University of Pisa)
++// Copyright (C) 2022-2026 Giovanni Nardini, Giovanni Stea et al. (University of Pisa)
++//
++// This file is part of a software released under the license included in file
++// "license.pdf". Please read LICENSE and README files before using it.
++// The above files and the present reference are part of the software itself,
++// and cannot be removed from it.
++//
++
+ #include <assert.h>
+ #include <cmath>
++#include <cctype>
++#include <fstream>
++#include <limits>
++#include <sstream>
++#include <unordered_map>
+ #include "simu5g/stack/phy/LtePhyUe.h"
+ #include "simu5g/stack/phy/NrPhyUe.h"
++#include "simu5g/common/LteCommon.h"
+ #include "simu5g/stack/ip2nic/Ip2Nic.h"
+-#include "simu5g/stack/mac/LteMacEnb.h"
+-#include "simu5g/stack/phy/packet/LteFeedbackPkt.h"
+-#include "simu5g/stack/phy/feedback/LteDlFeedbackGenerator.h"
+-#include "simu5g/common/LteControlInfoTags_m.h"
+-
+-namespace simu5g {
+-
+-Define_Module(LtePhyUe);
+-
+-using namespace inet;
+-
+-simsignal_t LtePhyUe::distanceSignal_ = registerSignal("distance");
+-simsignal_t LtePhyUe::servingCellSignal_ = registerSignal("servingCell");
++#include "simu5g/stack/mac/LteMacEnb.h"
++#include "simu5g/stack/phy/packet/LteFeedbackPkt.h"
++#include "simu5g/stack/phy/feedback/LteDlFeedbackGenerator.h"
++#include "simu5g/common/LteControlInfoTags_m.h"
++
++namespace simu5g {
++
++Define_Module(LtePhyUe);
++
++using namespace inet;
++
++simsignal_t LtePhyUe::distanceSignal_ = registerSignal("distance");
++simsignal_t LtePhyUe::servingCellSignal_ = registerSignal("servingCell");
+ simsignal_t LtePhyUe::servingRsrpSignal_ = registerSignal("servingRsrp");
+ simsignal_t LtePhyUe::neighborRsrpSignal_ = registerSignal("neighborRsrp");
+ simsignal_t LtePhyUe::deltaRsrpSignal_ = registerSignal("deltaRsrp");
++simsignal_t LtePhyUe::servingSinrSignal_ = registerSignal("servingSinr");
+ simsignal_t LtePhyUe::bestNeighborCellSignal_ = registerSignal("bestNeighborCell");
+ simsignal_t LtePhyUe::uePositionXSignal_ = registerSignal("uePositionX");
+ simsignal_t LtePhyUe::ueSpeedSignal_ = registerSignal("ueSpeed");
+ simsignal_t LtePhyUe::timeSinceLastHandoverSignal_ = registerSignal("timeSinceLastHandover");
++simsignal_t LtePhyUe::railwayPolicyActionSignal_ = registerSignal("railwayPolicyAction");
++simsignal_t LtePhyUe::railwayPolicyHysSignal_ = registerSignal("railwayPolicyHys");
++simsignal_t LtePhyUe::railwayPolicyTttSignal_ = registerSignal("railwayPolicyTtt");
++simsignal_t LtePhyUe::railwayPolicyQSignal_ = registerSignal("railwayPolicyQ");
+ 
+-LtePhyUe::~LtePhyUe()
+-{
+-    cancelAndDelete(handoverStarter_);
+-    cancelAndDelete(handoverTrigger_);
+-}
++namespace {
+ 
+-void LtePhyUe::initialize(int stage)
++std::string trimCopy(const std::string& value)
+ {
+-    LtePhyBase::initialize(stage);
+-
+-    if (stage == inet::INITSTAGE_LOCAL) {
+-        isNr_ = false;        // this might be true only if this module is a UeNrPhy
+-        nodeType_ = UE;
+-        enableHandover_ = par("enableHandover");
+-        handoverLatency_ = par("handoverLatency").doubleValue();
+-        handoverDetachment_ = handoverLatency_ / 2.0;                      // TODO: make this configurable from NED
+-        handoverAttachment_ = handoverLatency_ - handoverDetachment_;
+-        hysteresisFactor_ = par("hysteresisFactor").doubleValue();
+-        handoverDelta_ = par("handoverDelta").doubleValue();
+-        railwayA3TttHandover_ = par("railwayA3TttHandover").boolValue();
+-        railwayA3HysteresisDb_ = par("railwayA3Hysteresis").doubleValue();
+-        railwayA3TimeToTrigger_ = par("railwayA3TimeToTrigger").doubleValue();
+-        railwayA3MinNeighborRsrpDb_ = par("railwayA3MinNeighborRsrp").doubleValue();
+-        dynamicCellAssociation_ = par("dynamicCellAssociation");
+-        if (par("minRssiDefault").boolValue())
+-            minRssi_ = binder_->phyPisaData.minSnr();
+-        else
+-            minRssi_ = par("minRssi").doubleValue();
+-
+-        currentMasterRssi_ = -999.0;
+-        candidateMasterRssi_ = -999.0;
+-
+-        hasCollector = par("hasCollector");
+-
+-        if (!hasListeners(averageCqiDlSignal_))
+-            throw cRuntimeError("no phy listeners");
+-
+-        WATCH(nodeType_);
+-        WATCH(masterId_);
+-        WATCH(candidateMasterId_);
+-        WATCH(currentMasterRssi_);
+-        WATCH(candidateMasterRssi_);
+-        WATCH(hysteresisTh_);
+-        WATCH(hysteresisFactor_);
+-        WATCH(handoverDelta_);
+-        WATCH(railwayA3TttHandover_);
+-        WATCH(railwayA3HysteresisDb_);
+-        WATCH(railwayA3TimeToTrigger_);
+-        WATCH(railwayA3MinNeighborRsrpDb_);
+-
+-        txPower_ = ueTxPower_;
+-
+-        handoverStarter_ = new cMessage("handoverStarter");
+-
+-        // get the reference to the MAC module
+-        mac_ = check_and_cast<LteMacUe *>(gate(upperGateOut_)->getPathEndGate()->getOwnerModule());
+-
+-        rlcUm_.reference(this, "rlcUmModule", true);
+-        pdcp_.reference(this, "pdcpModule", true);
+-        ip2nic_.reference(this, "ip2nicModule", true);
+-        fbGen_.reference(this, "feedbackGeneratorModule", true);
+-
+-        // setting isNr_ was originally done in the NrPhyUe subclass, but it is needed here
+-        isNr_ = dynamic_cast<NrPhyUe*>(this) && strcmp(getFullName(), "nrPhy") == 0;
+-
+-        // get local id
+-        nodeId_ = MacNodeId(hostModule->par(isNr_ ? "nrMacNodeId" : "macNodeId").intValue());
+-        EV << "Local MacNodeId: " << nodeId_ << endl;
+-    }
+-    else if (stage == INITSTAGE_SIMU5G_PHYSICAL_LAYER) {
+-        // get serving cell from configuration
+-        masterId_ = binder_->getServingNode(nodeId_);
+-        candidateMasterId_ = masterId_;
+-
+-        // find the best candidate master cell
+-        if (dynamicCellAssociation_) {
+-            findCandidateEnb(candidateMasterId_, candidateMasterRssi_);
+-
+-            // binder calls
+-            // if dynamicCellAssociation selected a different master
+-            if (candidateMasterId_ != NODEID_NONE && candidateMasterId_ != masterId_) {
+-                binder_->unregisterServingNode(masterId_, nodeId_);
+-                binder_->registerServingNode(candidateMasterId_, nodeId_);
+-            }
+-            masterId_ = candidateMasterId_;
+-            currentMasterRssi_ = candidateMasterRssi_;
+-            updateHysteresisTh(candidateMasterRssi_);
+-        }
+-
+-        EV << "LtePhyUe::initialize - Attaching to eNodeB " << masterId_ << endl;
+-
+-        emit(servingCellSignal_, (long)masterId_);
+-
+-        if (masterId_ == NODEID_NONE)
+-            masterMobility_ = nullptr;
+-        else {
+-            cModule *masterModule = binder_->getModuleByMacNodeId(masterId_);
+-            masterMobility_ = check_and_cast<IMobility *>(masterModule->getSubmodule("mobility"));
+-        }
++    size_t first = 0;
++    while (first < value.size() && std::isspace(static_cast<unsigned char>(value[first])))
++        first++;
++
++    size_t last = value.size();
++    while (last > first && std::isspace(static_cast<unsigned char>(value[last - 1])))
++        last--;
+ 
+-        emitRailwayHandoverObservations();
+-    }
+-    else if (stage == INITSTAGE_SIMU5G_CELLINFO_CHANNELUPDATE) { //TODO being fwd, eliminate stage
+-        // get cellInfo at this stage because the next hop of the node is registered in the Ip2Nic module at the INITSTAGE_SIMU5G_NETWORK_LAYER
+-        if (masterId_ != NODEID_NONE)
+-            cellInfo_ = binder_->getCellInfoByNodeId(nodeId_);
+-        else
+-            cellInfo_ = nullptr;
+-    }
++    return value.substr(first, last - first);
+ }
+ 
+-double LtePhyUe::computeMeanRsrp(LteAirFrame *frame, UserControlInfo *lteInfo)
++std::vector<std::string> splitCsvLine(const std::string& line)
+ {
+-    std::vector<double> rsrpVector = primaryChannelModel_->getRSRP(frame, lteInfo);
+-    if (rsrpVector.empty())
+-        return -999.0;
+-
+-    double rsrp = 0;
+-    unsigned int validValues = 0;
+-    for (auto value : rsrpVector) {
+-        if (!std::isfinite(value))
+-            continue;
+-        rsrp += value;
+-        validValues++;
+-    }
+-    return validValues == 0 ? -999.0 : rsrp / validValues;
+-}
+-
+-void LtePhyUe::emitRailwayHandoverObservations()
+-{
+-    emit(uePositionXSignal_, getRadioPosition().x);
+-
+-    double speed = 0;
+-    if (hostModule != nullptr && hostModule->findSubmodule("mobility") != -1) {
+-        IMobility *mobility = check_and_cast<IMobility *>(hostModule->getSubmodule("mobility"));
+-        speed = mobility->getCurrentVelocity().length();
+-    }
+-    emit(ueSpeedSignal_, speed);
+-    emit(timeSinceLastHandoverSignal_, (simTime() - lastHandoverTime_).dbl());
+-
+-    if (primaryChannelModel_ == nullptr) {
+-        emit(servingRsrpSignal_, -999.0);
+-        emit(neighborRsrpSignal_, -999.0);
+-        emit(deltaRsrpSignal_, 0.0);
+-        emit(bestNeighborCellSignal_, (long)NODEID_NONE);
+-        return;
+-    }
+-
+-    LteAirFrame *frame = new LteAirFrame("railwayRsrpObservationFrame");
+-    UserControlInfo *cInfo = new UserControlInfo();
+-
+-    double servingRsrp = -999.0;
+-    double neighborRsrp = -999.0;
+-    MacNodeId bestNeighborCell = NODEID_NONE;
+-
+-    for (const auto& enbInfo : binder_->getEnbList()) {
+-        if (isNr_ != enbInfo->isNr)
++    std::vector<std::string> cells;
++    std::string cell;
++    bool inQuotes = false;
++
++    for (char ch : line) {
++        if (ch == '"') {
++            inQuotes = !inQuotes;
+             continue;
+-
+-        MacNodeId cellId = enbInfo->id;
+-        LtePhyBase *cellPhy = check_and_cast<LtePhyBase *>(
+-                enbInfo->eNodeB->getSubmodule("cellularNic")->getSubmodule("phy"));
+-        GHz ueCarrierFrequency = primaryChannelModel_->getCarrierFrequency();
+-        LteChannelModel *cellChannelModel = cellPhy->getChannelModel(ueCarrierFrequency);
+-        if (cellChannelModel == nullptr)
++        }
++        if (ch == ',' && !inQuotes) {
++            cells.push_back(trimCopy(cell));
++            cell.clear();
+             continue;
+-
+-        cInfo->setSourceId(cellId);
+-        cInfo->setTxPower(cellPhy->getTxPwr());
+-        cInfo->setCoord(cellPhy->getCoord());
+-        cInfo->setFrameType(BROADCASTPKT);
+-        cInfo->setDirection(DL);
+-
+-        double rsrp = computeMeanRsrp(frame, cInfo);
+-        if (cellId == masterId_)
+-            servingRsrp = rsrp;
+-        else if (bestNeighborCell == NODEID_NONE || rsrp > neighborRsrp) {
+-            bestNeighborCell = cellId;
+-            neighborRsrp = rsrp;
+         }
++        cell.push_back(ch);
+     }
+-
+-    delete cInfo;
+-    delete frame;
+-
+-    emit(servingRsrpSignal_, servingRsrp);
+-    emit(neighborRsrpSignal_, neighborRsrp);
+-    emit(deltaRsrpSignal_, neighborRsrp - servingRsrp);
+-    emit(bestNeighborCellSignal_, (long)bestNeighborCell);
++    cells.push_back(trimCopy(cell));
++    return cells;
+ }
+ 
+-void LtePhyUe::handleRailwayA3Handover(MacNodeId sourceId, double sourceRsrp)
++double parseDoubleCell(const std::vector<std::string>& cells, const std::unordered_map<std::string, int>& columns,
++        const char *name, double fallback = 0.0)
+ {
+-    if (sourceId != masterId_ && sourceRsrp < railwayA3MinNeighborRsrpDb_)
+-        return;
+-
+-    if (masterId_ == NODEID_NONE) {
+-        candidateMasterId_ = sourceId;
+-        candidateMasterRssi_ = sourceRsrp;
+-        binder_->addHandoverTriggered(nodeId_, masterId_, candidateMasterId_);
+-        if (!handoverStarter_->isScheduled())
+-            scheduleAt(simTime() + railwayA3TimeToTrigger_, handoverStarter_);
+-        return;
+-    }
+-
+-    if (sourceId == masterId_) {
+-        currentMasterRssi_ = sourceRsrp;
+-        if (railwayA3PendingCellId_ != NODEID_NONE && candidateMasterRssi_ - currentMasterRssi_ <= railwayA3HysteresisDb_) {
+-            cancelEvent(handoverStarter_);
+-            railwayA3PendingCellId_ = NODEID_NONE;
+-            binder_->removeHandoverTriggered(nodeId_);
+-        }
+-        return;
+-    }
+-
+-    if (currentMasterRssi_ <= -900.0)
+-        return;
+-
+-    if (sourceRsrp - currentMasterRssi_ > railwayA3HysteresisDb_) {
+-        candidateMasterId_ = sourceId;
+-        candidateMasterRssi_ = sourceRsrp;
+-        if (railwayA3PendingCellId_ != sourceId || !handoverStarter_->isScheduled()) {
+-            cancelEvent(handoverStarter_);
+-            railwayA3PendingCellId_ = sourceId;
+-            binder_->addHandoverTriggered(nodeId_, masterId_, candidateMasterId_);
+-            scheduleAt(simTime() + railwayA3TimeToTrigger_, handoverStarter_);
+-        }
+-    }
+-    else if (railwayA3PendingCellId_ == sourceId) {
+-        cancelEvent(handoverStarter_);
+-        railwayA3PendingCellId_ = NODEID_NONE;
+-        binder_->removeHandoverTriggered(nodeId_);
+-    }
++    auto it = columns.find(name);
++    if (it == columns.end() || it->second < 0 || it->second >= static_cast<int>(cells.size()) || cells[it->second].empty())
++        return fallback;
++    return std::stod(cells[it->second]);
+ }
+ 
+-void LtePhyUe::findCandidateEnb(MacNodeId& outCandidateMasterId, double& outCandidateMasterRssi)
++int parseIntCell(const std::vector<std::string>& cells, const std::unordered_map<std::string, int>& columns,
++        const char *name, int fallback = -1)
+ {
+-    // this is a fictitious frame that needs to compute the SINR
+-    LteAirFrame *frame = new LteAirFrame("cellSelectionFrame");
+-    UserControlInfo *cInfo = new UserControlInfo();
+-    outCandidateMasterId = NODEID_NONE;
+-
+-    // get the list of all eNodeBs in the network
+-    for (const auto &enbInfo : binder_->getEnbList()) {
+-        // the NR phy layer only checks signal from gNBs, and
+-        // the LTE phy layer only checks signal from eNBs
+-        if (isNr_ != enbInfo->isNr)
+-            continue;
+-
+-        MacNodeId cellId = enbInfo->id;
+-        LtePhyBase *cellPhy = check_and_cast<LtePhyBase*>(
+-                enbInfo->eNodeB->getSubmodule("cellularNic")->getSubmodule("phy"));
+-        double cellTxPower = cellPhy->getTxPwr();
+-        Coord cellPos = cellPhy->getCoord();
+-        // check whether the BS supports the carrier frequency used by the UE
+-        GHz ueCarrierFrequency = primaryChannelModel_->getCarrierFrequency();
+-        LteChannelModel *cellChannelModel = cellPhy->getChannelModel(ueCarrierFrequency);
+-        if (cellChannelModel == nullptr)
+-            continue;
+-
+-        // build a control info
+-        cInfo->setSourceId(cellId);
+-        cInfo->setTxPower(cellTxPower);
+-        cInfo->setCoord(cellPos);
+-        cInfo->setFrameType(BROADCASTPKT);
+-        cInfo->setDirection(DL);
+-        // get RSSI from the BS
+-        double rssi = 0;
+-        std::vector<double> rssiV = primaryChannelModel_->getRSRP(frame, cInfo);
+-        for (auto value : rssiV)
+-            rssi += value;
+-        rssi /= rssiV.size(); // compute the mean over all RBs
+-        EV << "LtePhyUe::findCandicateEnb - RSSI from cell " << cellId << ": " << rssi << " dB (current candidate cell " << outCandidateMasterId << ": " << outCandidateMasterRssi << " dB)" << endl;
+-        if (outCandidateMasterId == NODEID_NONE || rssi > outCandidateMasterRssi) {
+-            outCandidateMasterId = cellId;
+-            outCandidateMasterRssi = rssi;
+-        }
+-    }
+-    delete cInfo;
+-    delete frame;
++    auto it = columns.find(name);
++    if (it == columns.end() || it->second < 0 || it->second >= static_cast<int>(cells.size()) || cells[it->second].empty())
++        return fallback;
++    return std::stoi(cells[it->second]);
+ }
+ 
+-void LtePhyUe::handleSelfMessage(cMessage *msg)
++} // anonymous namespace
++
++LtePhyUe::~LtePhyUe()
++{
++    cancelAndDelete(handoverStarter_);
++    cancelAndDelete(handoverTrigger_);
++}
++
++void LtePhyUe::initialize(int stage)
++{
++    LtePhyBase::initialize(stage);
++
++    if (stage == inet::INITSTAGE_LOCAL) {
++        isNr_ = false;        // this might be true only if this module is a UeNrPhy
++        nodeType_ = UE;
++        enableHandover_ = par("enableHandover");
++        handoverLatency_ = par("handoverLatency").doubleValue();
++        handoverDetachment_ = handoverLatency_ / 2.0;                      // TODO: make this configurable from NED
++        handoverAttachment_ = handoverLatency_ - handoverDetachment_;
++        hysteresisFactor_ = par("hysteresisFactor").doubleValue();
++        handoverDelta_ = par("handoverDelta").doubleValue();
++        railwayA3TttHandover_ = par("railwayA3TttHandover").boolValue();
++        railwayA3HysteresisDb_ = par("railwayA3Hysteresis").doubleValue();
++        railwayA3TimeToTrigger_ = par("railwayA3TimeToTrigger").doubleValue();
++        railwayA3MinNeighborRsrpDb_ = par("railwayA3MinNeighborRsrp").doubleValue();
++        railwayPolicyTableEnabled_ = par("railwayPolicyTableEnabled").boolValue();
++        railwayPolicyTablePath_ = par("railwayPolicyTablePath").stdstringValue();
++        railwayPolicyUpdateInterval_ = par("railwayPolicyUpdateInterval").doubleValue();
++        railwayPolicyNoiseDbm_ = par("railwayPolicyNoise").doubleValue();
++        loadRailwayPolicyTable();
++        dynamicCellAssociation_ = par("dynamicCellAssociation");
++        if (par("minRssiDefault").boolValue())
++            minRssi_ = binder_->phyPisaData.minSnr();
++        else
++            minRssi_ = par("minRssi").doubleValue();
++
++        currentMasterRssi_ = -999.0;
++        candidateMasterRssi_ = -999.0;
++
++        hasCollector = par("hasCollector");
++
++        if (!hasListeners(averageCqiDlSignal_))
++            throw cRuntimeError("no phy listeners");
++
++        WATCH(nodeType_);
++        WATCH(masterId_);
++        WATCH(candidateMasterId_);
++        WATCH(currentMasterRssi_);
++        WATCH(candidateMasterRssi_);
++        WATCH(hysteresisTh_);
++        WATCH(hysteresisFactor_);
++        WATCH(handoverDelta_);
++        WATCH(railwayA3TttHandover_);
++        WATCH(railwayA3HysteresisDb_);
++        WATCH(railwayA3TimeToTrigger_);
++        WATCH(railwayA3MinNeighborRsrpDb_);
++        WATCH(railwayPolicyTableEnabled_);
++        WATCH(railwayPolicyTablePath_);
++        WATCH(railwayPolicyUpdateInterval_);
++        WATCH(railwayPolicyNoiseDbm_);
++        WATCH(railwayPolicyLastActionId_);
++        WATCH(railwayPolicyLastQValue_);
++
++        txPower_ = ueTxPower_;
++
++        handoverStarter_ = new cMessage("handoverStarter");
++
++        // get the reference to the MAC module
++        mac_ = check_and_cast<LteMacUe *>(gate(upperGateOut_)->getPathEndGate()->getOwnerModule());
++
++        rlcUm_.reference(this, "rlcUmModule", true);
++        pdcp_.reference(this, "pdcpModule", true);
++        ip2nic_.reference(this, "ip2nicModule", true);
++        fbGen_.reference(this, "feedbackGeneratorModule", true);
++
++        // setting isNr_ was originally done in the NrPhyUe subclass, but it is needed here
++        isNr_ = dynamic_cast<NrPhyUe*>(this) && strcmp(getFullName(), "nrPhy") == 0;
++
++        // get local id
++        nodeId_ = MacNodeId(hostModule->par(isNr_ ? "nrMacNodeId" : "macNodeId").intValue());
++        EV << "Local MacNodeId: " << nodeId_ << endl;
++    }
++    else if (stage == INITSTAGE_SIMU5G_PHYSICAL_LAYER) {
++        // get serving cell from configuration
++        masterId_ = binder_->getServingNode(nodeId_);
++        candidateMasterId_ = masterId_;
++
++        // find the best candidate master cell
++        if (dynamicCellAssociation_) {
++            findCandidateEnb(candidateMasterId_, candidateMasterRssi_);
++
++            // binder calls
++            // if dynamicCellAssociation selected a different master
++            if (candidateMasterId_ != NODEID_NONE && candidateMasterId_ != masterId_) {
++                binder_->unregisterServingNode(masterId_, nodeId_);
++                binder_->registerServingNode(candidateMasterId_, nodeId_);
++            }
++            masterId_ = candidateMasterId_;
++            currentMasterRssi_ = candidateMasterRssi_;
++            updateHysteresisTh(candidateMasterRssi_);
++        }
++
++        EV << "LtePhyUe::initialize - Attaching to eNodeB " << masterId_ << endl;
++
++        emit(servingCellSignal_, (long)masterId_);
++
++        if (masterId_ == NODEID_NONE)
++            masterMobility_ = nullptr;
++        else {
++            cModule *masterModule = binder_->getModuleByMacNodeId(masterId_);
++            masterMobility_ = check_and_cast<IMobility *>(masterModule->getSubmodule("mobility"));
++        }
++
++        emitRailwayHandoverObservations();
++    }
++    else if (stage == INITSTAGE_SIMU5G_CELLINFO_CHANNELUPDATE) { //TODO being fwd, eliminate stage
++        // get cellInfo at this stage because the next hop of the node is registered in the Ip2Nic module at the INITSTAGE_SIMU5G_NETWORK_LAYER
++        if (masterId_ != NODEID_NONE)
++            cellInfo_ = binder_->getCellInfoByNodeId(nodeId_);
++        else
++            cellInfo_ = nullptr;
++    }
++}
++
++double LtePhyUe::computeMeanRsrp(LteAirFrame *frame, UserControlInfo *lteInfo)
+ {
+-    if (msg->isName("handoverStarter"))
+-        triggerHandover();
+-    else if (msg->isName("handoverTrigger")) {
+-        doHandover();
+-        delete msg;
+-        handoverTrigger_ = nullptr;
+-    }
++    std::vector<double> rsrpVector = primaryChannelModel_->getRSRP(frame, lteInfo);
++    if (rsrpVector.empty())
++        return -999.0;
++
++    double rsrp = 0;
++    unsigned int validValues = 0;
++    for (auto value : rsrpVector) {
++        if (!std::isfinite(value))
++            continue;
++        rsrp += value;
++        validValues++;
++    }
++    return validValues == 0 ? -999.0 : rsrp / validValues;
+ }
+ 
+-void LtePhyUe::handoverHandler(LteAirFrame *frame, UserControlInfo *lteInfo)
++void LtePhyUe::loadRailwayPolicyTable()
+ {
+-    lteInfo->setDestId(nodeId_);
+-    if (!enableHandover_) {
+-        delete frame;
+-        delete lteInfo;
+-        return;
+-    }
+-
+-    frame->setControlInfo(lteInfo);
+-    double rssi = 0;
+-
+-    if (railwayA3TttHandover_) {
+-        double rsrp = computeMeanRsrp(frame, lteInfo);
+-        EV << "UE " << nodeId_ << " broadcast frame from " << lteInfo->getSourceId() << " with RSRP: " << rsrp << " at " << simTime() << endl;
+-        handleRailwayA3Handover(lteInfo->getSourceId(), rsrp);
+-        delete frame;
++    railwayPolicyTable_.clear();
++    if (!railwayPolicyTableEnabled_)
+         return;
+-    }
+ 
+-    // Compute RSSI from broadcast message (DAS removed - single antenna)
+-    std::vector<double> rssiV = primaryChannelModel_->getSINR(frame, lteInfo);
+-    for (auto value : rssiV)
+-        rssi += value;
+-    rssi /= rssiV.size();
+-
+-    EV << "UE " << nodeId_ << " broadcast frame from " << lteInfo->getSourceId() << " with RSSI: " << rssi << " at " << simTime() << endl;
+-
+-    if (lteInfo->getSourceId() != masterId_ && rssi < minRssi_) {
+-        EV << "Signal too weak from a candidate master - minRssi[" << minRssi_ << "]" << endl;
+-        delete frame;
+-        return;
+-    }
++    if (railwayPolicyTablePath_.empty())
++        throw cRuntimeError("railwayPolicyTableEnabled=true but railwayPolicyTablePath is empty");
+ 
+-    if (rssi > candidateMasterRssi_ + hysteresisTh_) {
+-        if (lteInfo->getSourceId() == masterId_) {
+-            // receiving even stronger broadcast from current master
+-            currentMasterRssi_ = rssi;
+-            candidateMasterId_ = masterId_;
+-            candidateMasterRssi_ = rssi;
+-            hysteresisTh_ = updateHysteresisTh(currentMasterRssi_);
+-            cancelEvent(handoverStarter_);
+-        }
+-        else {
+-            // broadcast from another master with higher RSSI
+-            candidateMasterId_ = lteInfo->getSourceId();
+-            candidateMasterRssi_ = rssi;
+-            hysteresisTh_ = updateHysteresisTh(rssi);
+-            binder_->addHandoverTriggered(nodeId_, masterId_, candidateMasterId_);
+-
+-            // schedule self message to evaluate handover parameters after
+-            // all broadcast messages have arrived
+-            if (!handoverStarter_->isScheduled()) {
+-                // all broadcast messages are scheduled at the very same time, a small delta
+-                // guarantees the ones belonging to the same turn have been received
+-                scheduleAt(simTime() + handoverDelta_, handoverStarter_);
+-            }
+-        }
+-    }
+-    else {
+-        if (lteInfo->getSourceId() == masterId_) {
+-            if (rssi >= minRssi_) {
+-                currentMasterRssi_ = rssi;
+-                candidateMasterRssi_ = rssi;
+-                hysteresisTh_ = updateHysteresisTh(rssi);
+-            }
+-            else { // lost connection from current master
+-                if (candidateMasterId_ == masterId_) { // trigger detachment
+-                    candidateMasterId_ = NODEID_NONE;
+-                    currentMasterRssi_ = -999.0;
+-                    candidateMasterRssi_ = -999.0; // set candidate RSSI very bad as we currently do not have any.
+-                                                   // this ensures that each candidate with is at least as 'bad'
+-                                                   // as the minRssi_ has a chance.
+-
+-                    hysteresisTh_ = updateHysteresisTh(0);
+-                    binder_->addHandoverTriggered(nodeId_, masterId_, candidateMasterId_);
+-
+-                    if (!handoverStarter_->isScheduled()) {
+-                        // all broadcast messages are scheduled at the very same time, a small delta
+-                        // guarantees the ones belonging to the same turn have been received
+-                        scheduleAt(simTime() + handoverDelta_, handoverStarter_);
+-                    }
+-                }
+-                // else do nothing, a stronger RSSI from another nodeB has been found already
+-            }
+-        }
++    std::ifstream input(railwayPolicyTablePath_);
++    if (!input.is_open())
++        throw cRuntimeError("Cannot open railway policy table CSV: %s", railwayPolicyTablePath_.c_str());
++
++    std::string line;
++    if (!std::getline(input, line))
++        throw cRuntimeError("Railway policy table CSV is empty: %s", railwayPolicyTablePath_.c_str());
++
++    std::unordered_map<std::string, int> columns;
++    auto header = splitCsvLine(line);
++    for (int i = 0; i < static_cast<int>(header.size()); i++)
++        columns[header[i]] = i;
++
++    const char *requiredColumns[] = {
++        "position_m", "speed_kmh", "rsrp_serv_dbm", "delta_rsrp_db",
++        "sinr_db", "time_since_ho_s", "action_id", "hys_db", "ttt_ms"
++    };
++    for (const char *name : requiredColumns) {
++        if (columns.find(name) == columns.end())
++            throw cRuntimeError("Railway policy table %s misses required column: %s", railwayPolicyTablePath_.c_str(), name);
+     }
+ 
+-    delete frame;
+-}
+-
+-void LtePhyUe::triggerHandover()
+-{
+-    ASSERT(masterId_ != candidateMasterId_);
++    while (std::getline(input, line)) {
++        if (line.empty())
++            continue;
+ 
+-    EV << "####Handover starting:####" << endl;
+-    EV << "current master: " << masterId_ << endl;
+-    EV << "current RSSI: " << currentMasterRssi_ << endl;
+-    EV << "candidate master: " << candidateMasterId_ << endl;
+-    EV << "candidate RSSI: " << candidateMasterRssi_ << endl;
+-    EV << "############" << endl;
+-
+-    if (candidateMasterRssi_ == 0)
+-        EV << NOW << " LtePhyUe::triggerHandover - UE " << nodeId_ << " lost its connection to eNB " << masterId_ << ". Now detaching... " << endl;
+-    else if (masterId_ == NODEID_NONE)
+-        EV << NOW << " LtePhyUe::triggerHandover - UE " << nodeId_ << " is starting attachment procedure to eNB " << candidateMasterId_ << "... " << endl;
+-    else
+-        EV << NOW << " LtePhyUe::triggerHandover - UE " << nodeId_ << " is starting handover to eNB " << candidateMasterId_ << "... " << endl;
+-
+-    binder_->addUeHandoverTriggered(nodeId_);
+-
+-    // inform the UE's Ip2Nic module to start holding downstream packets
+-    ip2nic_->triggerHandoverUe(candidateMasterId_);
+-    binder_->removeHandoverTriggered(nodeId_);
+-
+-    // inform the eNB's Ip2Nic module to forward data to the target eNB
+-    if (masterId_ != NODEID_NONE && candidateMasterId_ != NODEID_NONE) {
+-        Ip2Nic *enbIp2Nic = check_and_cast<Ip2Nic *>(binder_->getNodeModule(masterId_)->getSubmodule("cellularNic")->getSubmodule("ip2nic"));
+-        enbIp2Nic->triggerHandoverSource(nodeId_, candidateMasterId_);
++        auto cells = splitCsvLine(line);
++        RailwayPolicyTableEntry entry;
++        entry.positionM = parseDoubleCell(cells, columns, "position_m");
++        entry.speedKmh = parseDoubleCell(cells, columns, "speed_kmh");
++        entry.rsrpServDbm = parseDoubleCell(cells, columns, "rsrp_serv_dbm");
++        entry.deltaRsrpDb = parseDoubleCell(cells, columns, "delta_rsrp_db");
++        entry.sinrDb = parseDoubleCell(cells, columns, "sinr_db");
++        entry.timeSinceHoS = parseDoubleCell(cells, columns, "time_since_ho_s");
++        entry.actionId = parseIntCell(cells, columns, "action_id");
++        entry.hysDb = parseDoubleCell(cells, columns, "hys_db", 3.0);
++        entry.tttMs = parseDoubleCell(cells, columns, "ttt_ms", 150.0);
++        entry.qValue = parseDoubleCell(cells, columns, "q_value", 0.0);
++        railwayPolicyTable_.push_back(entry);
+     }
+ 
+-    double handoverLatency;
+-    if (masterId_ == NODEID_NONE)                                                // attachment only
+-        handoverLatency = handoverAttachment_;
+-    else if (candidateMasterId_ == NODEID_NONE)                                                // detachment only
+-        handoverLatency = handoverDetachment_;
+-    else
+-        handoverLatency = handoverDetachment_ + handoverAttachment_;
++    if (railwayPolicyTable_.empty())
++        throw cRuntimeError("Railway policy table CSV has no data rows: %s", railwayPolicyTablePath_.c_str());
+ 
+-    handoverTrigger_ = new cMessage("handoverTrigger");
+-    scheduleAt(simTime() + handoverLatency, handoverTrigger_);
++    EV_INFO << "Loaded railway policy table from " << railwayPolicyTablePath_
++            << " with " << railwayPolicyTable_.size() << " rows" << endl;
+ }
+ 
+-void LtePhyUe::doHandover()
++double LtePhyUe::computeRailwayPolicySinrProxy(double servingRsrpDbm, double neighborRsrpDbm) const
+ {
+-    // if masterId_ == 0, it means the UE was not attached to any eNodeB, so it only has to perform attachment procedures
+-    // if candidateMasterId_ == 0, it means the UE is detaching from its eNodeB, so it only has to perform detachment procedures
+-
+-    if (masterId_ != NODEID_NONE) {
+-        // Delete Old Buffers
+-        deleteOldBuffers(masterId_);
+-
+-        // amc calls
+-        LteAmc *oldAmc = getAmcModule(masterId_);
+-        oldAmc->detachUser(nodeId_, UL);
+-        oldAmc->detachUser(nodeId_, DL);
+-    }
+-
+-    if (candidateMasterId_ != NODEID_NONE) {
+-        LteAmc *newAmc = getAmcModule(candidateMasterId_);
+-        assert(newAmc != nullptr);
+-        newAmc->attachUser(nodeId_, UL);
+-        newAmc->attachUser(nodeId_, DL);
+-    }
+-
+-    // binder calls
+-    if (masterId_ != NODEID_NONE)
+-        binder_->unregisterServingNode(masterId_, nodeId_);
+-
+-    if (candidateMasterId_ != NODEID_NONE) {
+-        binder_->registerServingNode(candidateMasterId_, nodeId_);
+-    }
+-    binder_->updateUeInfoCellId(nodeId_, candidateMasterId_);
+-
+-    // @author Alessandro Noferi
+-    if (hasCollector) {
+-        binder_->moveUeCollector(nodeId_, masterId_, candidateMasterId_);
+-    }
+-
+-    // change masterId and notify handover to the MAC layer
+-    MacNodeId oldMaster = masterId_;
+-    masterId_ = candidateMasterId_;
+-    mac_->doHandover(candidateMasterId_);  // do MAC operations for handover
+-    lastHandoverTime_ = simTime();
+-    railwayA3PendingCellId_ = NODEID_NONE;
+-
+-    currentMasterRssi_ = candidateMasterRssi_;
+-    hysteresisTh_ = updateHysteresisTh(currentMasterRssi_);
+-
+-    // update reference to master node's mobility module
+-    if (masterId_ == NODEID_NONE)
+-        masterMobility_ = nullptr;
+-    else {
+-        cModule *masterModule = binder_->getModuleByMacNodeId(masterId_);
+-        masterMobility_ = check_and_cast<IMobility *>(masterModule->getSubmodule("mobility"));
+-    }
+-
+-    // update cellInfo
+-    if (oldMaster != NODEID_NONE)
+-        cellInfo_->detachUser(nodeId_);
+-
+-    if (masterId_ != NODEID_NONE) {
+-        LteMacEnb *newMacEnb = check_and_cast<LteMacEnb *>(binder_->getMacByNodeId(masterId_));
+-        cellInfo_ = newMacEnb->getCellInfo();
+-        cellInfo_->attachUser(nodeId_);
+-    }
++    if (!std::isfinite(servingRsrpDbm) || servingRsrpDbm < -900)
++        return -10.0;
+ 
+-    // update DL feedback generator
+-    fbGen_->handleHandover(masterId_);
++    double noiseLinear = dBmToLinear(railwayPolicyNoiseDbm_);
++    double interferenceLinear = 0.0;
++    if (std::isfinite(neighborRsrpDbm) && neighborRsrpDbm > -900)
++        interferenceLinear = dBmToLinear(neighborRsrpDbm);
++
++    double denominator = noiseLinear + interferenceLinear;
++    if (denominator <= 0)
++        return 20.0;
+ 
+-    // collect stat
+-    emit(servingCellSignal_, (long)masterId_);
+-
+-    if (masterId_ == NODEID_NONE)
+-        EV << NOW << " LtePhyUe::doHandover - UE " << nodeId_ << " detached from the network" << endl;
+-    else
+-        EV << NOW << " LtePhyUe::doHandover - UE " << nodeId_ << " has completed handover to eNB " << masterId_ << "... " << endl;
+-    binder_->removeUeHandoverTriggered(nodeId_);
+-
+-    // inform the UE's Ip2Nic module to forward held packets
+-    ip2nic_->signalHandoverCompleteUe();
+-
+-    // inform the eNB's Ip2Nic module to forward data to the target eNB
+-    if (oldMaster != NODEID_NONE && candidateMasterId_ != NODEID_NONE) {
+-        Ip2Nic *enbIp2Nic = check_and_cast<Ip2Nic *>(binder_->getNodeModule(masterId_)->getSubmodule("cellularNic")->getSubmodule("ip2nic"));
+-        enbIp2Nic->signalHandoverCompleteTarget(nodeId_, oldMaster);
+-    }
++    return servingRsrpDbm - linearToDBm(denominator);
+ }
+ 
+-// TODO: ***reorganize*** method
+-void LtePhyUe::handleAirFrame(cMessage *msg)
++void LtePhyUe::updateRailwayPolicyFromTable(double positionM, double speedMps, double servingRsrpDbm,
++        double neighborRsrpDbm, double servingSinrDb, double timeSinceHoS)
+ {
+-    LteAirFrame *frame = static_cast<LteAirFrame *>(msg);
+-    UserControlInfo *lteInfo = new UserControlInfo(frame->getAdditionalInfo());
+-
+-    connectedNodeId_ = masterId_;
+-    EV << "LtePhy: received new LteAirFrame with ID " << frame->getId() << " from channel" << endl;
+-
+-    if (!binder_->nodeExists(lteInfo->getSourceId())) {
+-        // source has left the simulation
+-        delete msg;
++    if (!railwayPolicyTableEnabled_ || railwayPolicyTable_.empty())
+         return;
+-    }
+ 
+-    // check if the air frame was sent on a correct carrier frequency
+-    GHz carrierFreq = lteInfo->getCarrierFrequency();
+-    LteChannelModel *channelModel = getChannelModel(carrierFreq);
+-    if (channelModel == nullptr) {
+-        EV << "Received packet on carrier frequency not supported by this node. Delete it." << endl;
+-        delete lteInfo;
+-        delete frame;
++    if (railwayPolicyHasLastUpdate_
++            && simTime() - railwayPolicyLastUpdateTime_ < railwayPolicyUpdateInterval_)
+         return;
+-    }
+ 
+-    //Update coordinates of this user
+-    if (lteInfo->getFrameType() == HANDOVERPKT) {
+-        // check if the message is on another carrier frequency or handover is already in process
+-        if (carrierFreq != primaryChannelModel_->getCarrierFrequency() || (handoverTrigger_ != nullptr && handoverTrigger_->isScheduled())) {
+-            EV << "Received handover packet on a different carrier frequency than the primary cell. Delete it." << endl;
+-            delete lteInfo;
+-            delete frame;
+-            return;
+-        }
++    railwayPolicyLastUpdateTime_ = simTime();
++    railwayPolicyHasLastUpdate_ = true;
+ 
+-        handoverHandler(frame, lteInfo);
+-        return;
+-    }
++    double speedKmh = speedMps * 3.6;
++    double deltaRsrpDb = neighborRsrpDbm - servingRsrpDbm;
+ 
+-    // Check if the frame is for us ( MacNodeId matches )
+-    if (lteInfo->getDestId() != nodeId_) {
+-        EV << "ERROR: Frame is not for us. Delete it." << endl;
+-        EV << "Packet Type: " << phyFrameTypeToA((LtePhyFrameType)lteInfo->getFrameType()) << endl;
+-        EV << "Frame MacNodeId: " << lteInfo->getDestId() << endl;
+-        EV << "Local MacNodeId: " << nodeId_ << endl;
+-        delete lteInfo;
+-        delete frame;
+-        return;
+-    }
++    const RailwayPolicyTableEntry *best = nullptr;
++    double bestDistance = std::numeric_limits<double>::infinity();
+ 
+-    /*
+-     * This could happen if the ue associates with a new master while the old one
+-     * already scheduled a packet for him: the packet is in the air while the ue changes master.
+-     * Event timing:      TTI x: packet scheduled and sent for UE (tx time = 1ms)
+-     *                     TTI x+0.1: ue changes master
+-     *                     TTI x+1: packet from old master arrives at ue
+-     */
+-    if (lteInfo->getSourceId() != masterId_) {
+-        EV << "WARNING: frame from an old master during handover: deleted " << endl;
+-        EV << "Source MacNodeId: " << lteInfo->getSourceId() << endl;
+-        EV << "Master MacNodeId: " << masterId_ << endl;
+-        delete frame;
+-        return;
+-    }
+-
+-    // send H-ARQ feedback up
+-    if (lteInfo->getFrameType() == HARQPKT || lteInfo->getFrameType() == GRANTPKT || lteInfo->getFrameType() == RACPKT) {
+-        handleControlMsg(frame, lteInfo);
+-        return;
+-    }
+-    if ((lteInfo->getUserTxParams()) != nullptr) {
+-        int cw = lteInfo->getCw();
+-        if (lteInfo->getUserTxParams()->readCqiVector().size() == 1)
+-            cw = 0;
+-        double cqi = lteInfo->getUserTxParams()->readCqiVector()[cw];
+-        emit(averageCqiDlSignal_, cqi);
+-        recordCqi(cqi, DL);
+-    }
+-    // apply decider to received packet (DAS removed - single antenna only)
+-    bool result = channelModel->isReceptionSuccessful(frame, lteInfo);
+-
+-    // update statistics
+-    if (result)
+-        numAirFrameReceived_++;
+-    else
+-        numAirFrameNotReceived_++;
+-
+-    EV << "Handled LteAirframe with ID " << frame->getId() << " with result "
+-       << (result ? "RECEIVED" : "NOT RECEIVED") << endl;
+-
+-    auto pkt = check_and_cast<inet::Packet *>(frame->decapsulate());
+-
+-    // here frame has to be destroyed since it is no longer useful
+-    delete frame;
+-
+-    // attach the decider result to the packet as control info
+-    *(pkt->addTagIfAbsent<UserControlInfo>()) = *lteInfo;
+-    delete lteInfo;
+-
+-    pkt->addTagIfAbsent<PhyReceptionInd>()->setDeciderResult(result);
+-
+-    // send decapsulated message along with result control info to upperGateOut_
+-    send(pkt, upperGateOut_);
+-
+-    if (getEnvir()->isGUI())
+-        updateDisplayString();
+-}
+-
+-void LtePhyUe::handleUpperMessage(cMessage *msg)
+-{
+-    auto pkt = check_and_cast<inet::Packet *>(msg);
+-    auto lteInfo = pkt->getTag<UserControlInfo>();
+-
+-    MacNodeId dest = lteInfo->getDestId();
+-    if (dest != masterId_) {
+-        // UE is not sending to its master!!
+-        throw cRuntimeError("LtePhyUe::handleUpperMessage  Ue preparing to send message to %hu instead of its master (%hu)", num(dest), num(masterId_));
+-    }
+-
+-    GHz carrierFreq = lteInfo->getCarrierFrequency();
+-    LteChannelModel *channelModel = getChannelModel(carrierFreq);
+-    if (channelModel == nullptr)
+-        throw cRuntimeError("LtePhyUe::handleUpperMessage - Carrier frequency [%f] not supported by any channel model", carrierFreq.get());
+-
+-    if (lteInfo->getFrameType() == DATAPKT && (channelModel->isUplinkInterferenceEnabled() || channelModel->isD2DInterferenceEnabled())) {
+-        // Store the RBs used for data transmission to the binder (for UL interference computation)
+-        RbMap rbMap = lteInfo->getGrantedBlocks();
+-        Remote antenna = MACRO;  // TODO fix for multi-antenna
+-        binder_->storeUlTransmissionMap(channelModel->getCarrierFrequency(), antenna, rbMap, nodeId_, mac_->getMacCellId(), this, UL);
+-    }
+-
+-    if (lteInfo->getFrameType() == DATAPKT && lteInfo->getUserTxParams() != nullptr) {
+-        double cqi = lteInfo->getUserTxParams()->readCqiVector()[lteInfo->getCw()];
+-        if (lteInfo->getDirection() == UL) {
+-            emit(averageCqiUlSignal_, cqi);
+-            recordCqi(cqi, UL);
++    for (const auto& entry : railwayPolicyTable_) {
++        double dPosition = (positionM - entry.positionM) / 100.0;
++        double dSpeed = (speedKmh - entry.speedKmh) / 50.0;
++        double dRsrp = (servingRsrpDbm - entry.rsrpServDbm) / 5.0;
++        double dDelta = (deltaRsrpDb - entry.deltaRsrpDb) / 5.0;
++        double dSinr = (servingSinrDb - entry.sinrDb) / 5.0;
++        double dTime = (timeSinceHoS - entry.timeSinceHoS) / 2.0;
++        double distance = dPosition * dPosition + dSpeed * dSpeed + dRsrp * dRsrp
++                + dDelta * dDelta + dSinr * dSinr + dTime * dTime;
++
++        if (distance < bestDistance) {
++            bestDistance = distance;
++            best = &entry;
+         }
+-        else if (lteInfo->getDirection() == D2D)
+-            emit(averageCqiD2DSignal_, cqi);
+-    }
+-
+-    LtePhyBase::handleUpperMessage(msg);
+-}
+-
+-void LtePhyUe::emitMobilityStats()
+-{
+-    // emit serving cell id
+-    emit(servingCellSignal_, (long)masterId_);
+-
+-    if (masterMobility_) {
+-        // emit distance from current serving cell
+-        inet::Coord masterPos = masterMobility_->getCurrentPosition();
+-        double distance = getRadioPosition().distance(masterPos);
+-        emit(distanceSignal_, distance);
+     }
+ 
+-    emitRailwayHandoverObservations();
+-}
+-
+-double LtePhyUe::updateHysteresisTh(double v)
+-{
+-    if (hysteresisFactor_ == 0)
+-        return 0;
+-    else
+-        return v / hysteresisFactor_;
+-}
+-
+-void LtePhyUe::deleteOldBuffers(MacNodeId masterId)
+-{
+-    // Delete Mac Buffers
+-
+-    // delete macBuffer[nodeId_] at old master
+-    LteMacEnb *masterMac = check_and_cast<LteMacEnb *>(binder_->getMacByNodeId(masterId));
+-    masterMac->deleteQueues(nodeId_);
+-
+-    // delete queues for master at this ue
+-    mac_->deleteQueues(masterId_);
+-
+-    // Delete Rlc UM Buffers
+-
+-    // delete UmTxQueue[nodeId_] at old master
+-    LteRlcUm *masterRlcUm = check_and_cast<LteRlcUm *>(binder_->getRlcByNodeId(masterId, UM));
+-    masterRlcUm->deleteQueues(nodeId_);
+-
+-    // delete queues for master at this ue
+-    rlcUm_->deleteQueues(nodeId_);
+-
+-    // Delete PDCP Entities
+-    // delete pdcpEntities[nodeId_] at old master
+-    LtePdcpEnb *masterPdcp = check_and_cast<LtePdcpEnb *>(binder_->getPdcpByNodeId(masterId));
+-    masterPdcp->deleteEntities(nodeId_);
+-
+-    // delete queues for master at this ue
+-    pdcp_->deleteEntities(masterId_);
+-}
+-
+-void LtePhyUe::sendFeedback(LteFeedbackDoubleVector fbDl, LteFeedbackDoubleVector fbUl, FeedbackRequest req)
+-{
+-    Enter_Method("SendFeedback");
+-    EV << "LtePhyUe: feedback from Feedback Generator" << endl;
+-
+-    //Create a feedback packet
+-    auto fbPkt = makeShared<LteFeedbackPkt>();
+-    //Set the feedback
+-    fbPkt->setLteFeedbackDoubleVectorDl(fbDl);
+-    fbPkt->setLteFeedbackDoubleVectorDl(fbUl);
+-    fbPkt->setSourceNodeId(nodeId_);
+-
+-    auto pkt = new Packet("feedback_pkt");
+-    pkt->insertAtFront(fbPkt);
+-
+-    UserControlInfo *uinfo = new UserControlInfo();
+-    uinfo->setSourceId(nodeId_);
+-    uinfo->setDestId(masterId_);
+-    uinfo->setFrameType(FEEDBACKPKT);
+-    // create LteAirFrame and encapsulate a feedback packet
+-    LteAirFrame *frame = new LteAirFrame("feedback_pkt");
+-    frame->encapsulate(check_and_cast<cPacket *>(pkt));
+-    uinfo->setFeedbackReq(req);
+-    uinfo->setDirection(UL);
+-    simtime_t signalLength = TTI;
+-    uinfo->setTxPower(txPower_);
+-    // initialize frame fields
+-
+-    frame->setSchedulingPriority(airFramePriority_);
+-    frame->setDuration(signalLength);
+-
+-    uinfo->setCoord(getRadioPosition());
+-
+-    //TODO access speed data Update channel index
+-    lastFeedback_ = NOW;
+-
+-    // send one feedback packet for each carrier
+-    for (auto& cm : channelModel_) {
+-        GHz carrierFrequency = cm.first;
+-        LteAirFrame *carrierFrame = frame->dup();
+-        UserControlInfo *carrierInfo = uinfo->dup();
+-        carrierInfo->setCarrierFrequency(carrierFrequency);
+-        carrierFrame->setControlInfo(carrierInfo);
+-
+-        EV << "LtePhy: " << nodeTypeToA(nodeType_) << " with id "
+-           << nodeId_ << " sending feedback to the air channel for carrier " << carrierFrequency << endl;
+-        sendUnicast(carrierFrame);
+-    }
+-
+-    delete frame;
+-    delete uinfo;
+-}
++    if (best == nullptr)
++        return;
+ 
+-void LtePhyUe::recordCqi(unsigned int sample, Direction dir)
+-{
+-    if (dir == DL) {
+-        cqiDlSamples_.push_back(sample);
+-        cqiDlSum_ += sample;
+-        cqiDlCount_++;
+-    }
+-    if (dir == UL) {
+-        cqiUlSamples_.push_back(sample);
+-        cqiUlSum_ += sample;
+-        cqiUlCount_++;
+-    }
++    railwayA3HysteresisDb_ = best->hysDb;
++    railwayA3TimeToTrigger_ = best->tttMs / 1000.0;
++    railwayPolicyLastActionId_ = best->actionId;
++    railwayPolicyLastQValue_ = best->qValue;
++
++    emit(railwayPolicyActionSignal_, (long)railwayPolicyLastActionId_);
++    emit(railwayPolicyHysSignal_, railwayA3HysteresisDb_);
++    emit(railwayPolicyTttSignal_, railwayA3TimeToTrigger_);
++    emit(railwayPolicyQSignal_, railwayPolicyLastQValue_);
+ }
+ 
+-double LtePhyUe::getAverageCqi(Direction dir)
++void LtePhyUe::emitRailwayHandoverObservations()
+ {
+-    if (dir == DL) {
+-        if (cqiDlCount_ == 0)
+-            return 0;
+-        return (double)cqiDlSum_ / cqiDlCount_;
+-    }
+-    if (dir == UL) {
+-        if (cqiUlCount_ == 0)
+-            return 0;
+-        return (double)cqiUlSum_ / cqiUlCount_;
+-    }
+-    throw cRuntimeError("Direction %d is not handled.", dir);
+-}
++    emit(uePositionXSignal_, getRadioPosition().x);
+ 
+-double LtePhyUe::getVarianceCqi(Direction dir)
+-{
+-    double avgCqi = getAverageCqi(dir);
+-    double err, sum = 0;
++    double speed = 0;
++    if (hostModule != nullptr && hostModule->findSubmodule("mobility") != -1) {
++        IMobility *mobility = check_and_cast<IMobility *>(hostModule->getSubmodule("mobility"));
++        speed = mobility->getCurrentVelocity().length();
++    }
++    emit(ueSpeedSignal_, speed);
++    double timeSinceHo = (simTime() - lastHandoverTime_).dbl();
++    emit(timeSinceLastHandoverSignal_, timeSinceHo);
+ 
+-    if (dir == DL) {
+-        for (short & cqiDlSample : cqiDlSamples_) {
+-            err = avgCqi - cqiDlSample;
+-            sum += (err * err);
+-        }
+-        return sum / cqiDlSamples_.size();
+-    }
+-    if (dir == UL) {
+-        for (short & cqiUlSample : cqiUlSamples_) {
+-            err = avgCqi - cqiUlSample;
+-            sum += (err * err);
+-        }
+-        return sum / cqiUlSamples_.size();
++    if (primaryChannelModel_ == nullptr) {
++        emit(servingRsrpSignal_, -999.0);
++        emit(neighborRsrpSignal_, -999.0);
++        emit(deltaRsrpSignal_, 0.0);
++        emit(servingSinrSignal_, -10.0);
++        emit(bestNeighborCellSignal_, (long)NODEID_NONE);
++        return;
+     }
+-    throw cRuntimeError("Direction %d is not handled.", dir);
+-}
+-
+-void LtePhyUe::finish()
+-{
+-    if (getSimulation()->getSimulationStage() != CTX_FINISH) {
+-        // do this only during the deletion of the module during the simulation
++
++    LteAirFrame *frame = new LteAirFrame("railwayRsrpObservationFrame");
++    UserControlInfo *cInfo = new UserControlInfo();
++
++    double servingRsrp = -999.0;
++    double neighborRsrp = -999.0;
++    MacNodeId bestNeighborCell = NODEID_NONE;
++
++    for (const auto& enbInfo : binder_->getEnbList()) {
++        if (isNr_ != enbInfo->isNr)
++            continue;
++
++        MacNodeId cellId = enbInfo->id;
++        LtePhyBase *cellPhy = check_and_cast<LtePhyBase *>(
++                enbInfo->eNodeB->getSubmodule("cellularNic")->getSubmodule("phy"));
++        GHz ueCarrierFrequency = primaryChannelModel_->getCarrierFrequency();
++        LteChannelModel *cellChannelModel = cellPhy->getChannelModel(ueCarrierFrequency);
++        if (cellChannelModel == nullptr)
++            continue;
++
++        cInfo->setSourceId(cellId);
++        cInfo->setTxPower(cellPhy->getTxPwr());
++        cInfo->setCoord(cellPhy->getCoord());
++        cInfo->setFrameType(BROADCASTPKT);
++        cInfo->setDirection(DL);
++
++        double rsrp = computeMeanRsrp(frame, cInfo);
++        if (cellId == masterId_)
++            servingRsrp = rsrp;
++        else if (bestNeighborCell == NODEID_NONE || rsrp > neighborRsrp) {
++            bestNeighborCell = cellId;
++            neighborRsrp = rsrp;
++        }
++    }
++
++    delete cInfo;
++    delete frame;
+ 
+-        // do this only if this PHY layer is connected to a serving base station
+-        if (masterId_ != NODEID_NONE) {
+-            // clear buffers
+-            deleteOldBuffers(masterId_);
+-
+-            // amc calls
+-            LteAmc *amc = getAmcModule(masterId_);
+-            if (amc != nullptr) {
+-                amc->detachUser(nodeId_, UL);
+-                amc->detachUser(nodeId_, DL);
+-            }
+-
+-            // binder call
+-            binder_->unregisterServingNode(masterId_, nodeId_);
+-
+-            // cellInfo call
+-            cellInfo_->detachUser(nodeId_);
+-        }
+-    }
++    emit(servingRsrpSignal_, servingRsrp);
++    emit(neighborRsrpSignal_, neighborRsrp);
++    emit(deltaRsrpSignal_, neighborRsrp - servingRsrp);
++    double servingSinr = computeRailwayPolicySinrProxy(servingRsrp, neighborRsrp);
++    emit(servingSinrSignal_, servingSinr);
++    emit(bestNeighborCellSignal_, (long)bestNeighborCell);
++    updateRailwayPolicyFromTable(getRadioPosition().x, speed, servingRsrp, neighborRsrp, servingSinr, timeSinceHo);
+ }
+-
+-} //namespace
++
++void LtePhyUe::handleRailwayA3Handover(MacNodeId sourceId, double sourceRsrp)
++{
++    if (sourceId != masterId_ && sourceRsrp < railwayA3MinNeighborRsrpDb_)
++        return;
++
++    if (masterId_ == NODEID_NONE) {
++        candidateMasterId_ = sourceId;
++        candidateMasterRssi_ = sourceRsrp;
++        binder_->addHandoverTriggered(nodeId_, masterId_, candidateMasterId_);
++        if (!handoverStarter_->isScheduled())
++            scheduleAt(simTime() + railwayA3TimeToTrigger_, handoverStarter_);
++        return;
++    }
++
++    if (sourceId == masterId_) {
++        currentMasterRssi_ = sourceRsrp;
++        if (railwayA3PendingCellId_ != NODEID_NONE && candidateMasterRssi_ - currentMasterRssi_ <= railwayA3HysteresisDb_) {
++            cancelEvent(handoverStarter_);
++            railwayA3PendingCellId_ = NODEID_NONE;
++            binder_->removeHandoverTriggered(nodeId_);
++        }
++        return;
++    }
++
++    if (currentMasterRssi_ <= -900.0)
++        return;
++
++    if (sourceRsrp - currentMasterRssi_ > railwayA3HysteresisDb_) {
++        candidateMasterId_ = sourceId;
++        candidateMasterRssi_ = sourceRsrp;
++        if (railwayA3PendingCellId_ != sourceId || !handoverStarter_->isScheduled()) {
++            cancelEvent(handoverStarter_);
++            railwayA3PendingCellId_ = sourceId;
++            binder_->addHandoverTriggered(nodeId_, masterId_, candidateMasterId_);
++            scheduleAt(simTime() + railwayA3TimeToTrigger_, handoverStarter_);
++        }
++    }
++    else if (railwayA3PendingCellId_ == sourceId) {
++        cancelEvent(handoverStarter_);
++        railwayA3PendingCellId_ = NODEID_NONE;
++        binder_->removeHandoverTriggered(nodeId_);
++    }
++}
++
++void LtePhyUe::findCandidateEnb(MacNodeId& outCandidateMasterId, double& outCandidateMasterRssi)
++{
++    // this is a fictitious frame that needs to compute the SINR
++    LteAirFrame *frame = new LteAirFrame("cellSelectionFrame");
++    UserControlInfo *cInfo = new UserControlInfo();
++    outCandidateMasterId = NODEID_NONE;
++
++    // get the list of all eNodeBs in the network
++    for (const auto &enbInfo : binder_->getEnbList()) {
++        // the NR phy layer only checks signal from gNBs, and
++        // the LTE phy layer only checks signal from eNBs
++        if (isNr_ != enbInfo->isNr)
++            continue;
++
++        MacNodeId cellId = enbInfo->id;
++        LtePhyBase *cellPhy = check_and_cast<LtePhyBase*>(
++                enbInfo->eNodeB->getSubmodule("cellularNic")->getSubmodule("phy"));
++        double cellTxPower = cellPhy->getTxPwr();
++        Coord cellPos = cellPhy->getCoord();
++        // check whether the BS supports the carrier frequency used by the UE
++        GHz ueCarrierFrequency = primaryChannelModel_->getCarrierFrequency();
++        LteChannelModel *cellChannelModel = cellPhy->getChannelModel(ueCarrierFrequency);
++        if (cellChannelModel == nullptr)
++            continue;
++
++        // build a control info
++        cInfo->setSourceId(cellId);
++        cInfo->setTxPower(cellTxPower);
++        cInfo->setCoord(cellPos);
++        cInfo->setFrameType(BROADCASTPKT);
++        cInfo->setDirection(DL);
++        // get RSSI from the BS
++        double rssi = 0;
++        std::vector<double> rssiV = primaryChannelModel_->getRSRP(frame, cInfo);
++        for (auto value : rssiV)
++            rssi += value;
++        rssi /= rssiV.size(); // compute the mean over all RBs
++        EV << "LtePhyUe::findCandicateEnb - RSSI from cell " << cellId << ": " << rssi << " dB (current candidate cell " << outCandidateMasterId << ": " << outCandidateMasterRssi << " dB)" << endl;
++        if (outCandidateMasterId == NODEID_NONE || rssi > outCandidateMasterRssi) {
++            outCandidateMasterId = cellId;
++            outCandidateMasterRssi = rssi;
++        }
++    }
++    delete cInfo;
++    delete frame;
++}
++
++void LtePhyUe::handleSelfMessage(cMessage *msg)
++{
++    if (msg->isName("handoverStarter"))
++        triggerHandover();
++    else if (msg->isName("handoverTrigger")) {
++        doHandover();
++        delete msg;
++        handoverTrigger_ = nullptr;
++    }
++}
++
++void LtePhyUe::handoverHandler(LteAirFrame *frame, UserControlInfo *lteInfo)
++{
++    lteInfo->setDestId(nodeId_);
++    if (!enableHandover_) {
++        delete frame;
++        delete lteInfo;
++        return;
++    }
++
++    frame->setControlInfo(lteInfo);
++    double rssi = 0;
++
++    if (railwayA3TttHandover_) {
++        double rsrp = computeMeanRsrp(frame, lteInfo);
++        EV << "UE " << nodeId_ << " broadcast frame from " << lteInfo->getSourceId() << " with RSRP: " << rsrp << " at " << simTime() << endl;
++        handleRailwayA3Handover(lteInfo->getSourceId(), rsrp);
++        delete frame;
++        return;
++    }
++
++    // Compute RSSI from broadcast message (DAS removed - single antenna)
++    std::vector<double> rssiV = primaryChannelModel_->getSINR(frame, lteInfo);
++    for (auto value : rssiV)
++        rssi += value;
++    rssi /= rssiV.size();
++
++    EV << "UE " << nodeId_ << " broadcast frame from " << lteInfo->getSourceId() << " with RSSI: " << rssi << " at " << simTime() << endl;
++
++    if (lteInfo->getSourceId() != masterId_ && rssi < minRssi_) {
++        EV << "Signal too weak from a candidate master - minRssi[" << minRssi_ << "]" << endl;
++        delete frame;
++        return;
++    }
++
++    if (rssi > candidateMasterRssi_ + hysteresisTh_) {
++        if (lteInfo->getSourceId() == masterId_) {
++            // receiving even stronger broadcast from current master
++            currentMasterRssi_ = rssi;
++            candidateMasterId_ = masterId_;
++            candidateMasterRssi_ = rssi;
++            hysteresisTh_ = updateHysteresisTh(currentMasterRssi_);
++            cancelEvent(handoverStarter_);
++        }
++        else {
++            // broadcast from another master with higher RSSI
++            candidateMasterId_ = lteInfo->getSourceId();
++            candidateMasterRssi_ = rssi;
++            hysteresisTh_ = updateHysteresisTh(rssi);
++            binder_->addHandoverTriggered(nodeId_, masterId_, candidateMasterId_);
++
++            // schedule self message to evaluate handover parameters after
++            // all broadcast messages have arrived
++            if (!handoverStarter_->isScheduled()) {
++                // all broadcast messages are scheduled at the very same time, a small delta
++                // guarantees the ones belonging to the same turn have been received
++                scheduleAt(simTime() + handoverDelta_, handoverStarter_);
++            }
++        }
++    }
++    else {
++        if (lteInfo->getSourceId() == masterId_) {
++            if (rssi >= minRssi_) {
++                currentMasterRssi_ = rssi;
++                candidateMasterRssi_ = rssi;
++                hysteresisTh_ = updateHysteresisTh(rssi);
++            }
++            else { // lost connection from current master
++                if (candidateMasterId_ == masterId_) { // trigger detachment
++                    candidateMasterId_ = NODEID_NONE;
++                    currentMasterRssi_ = -999.0;
++                    candidateMasterRssi_ = -999.0; // set candidate RSSI very bad as we currently do not have any.
++                                                   // this ensures that each candidate with is at least as 'bad'
++                                                   // as the minRssi_ has a chance.
++
++                    hysteresisTh_ = updateHysteresisTh(0);
++                    binder_->addHandoverTriggered(nodeId_, masterId_, candidateMasterId_);
++
++                    if (!handoverStarter_->isScheduled()) {
++                        // all broadcast messages are scheduled at the very same time, a small delta
++                        // guarantees the ones belonging to the same turn have been received
++                        scheduleAt(simTime() + handoverDelta_, handoverStarter_);
++                    }
++                }
++                // else do nothing, a stronger RSSI from another nodeB has been found already
++            }
++        }
++    }
++
++    delete frame;
++}
++
++void LtePhyUe::triggerHandover()
++{
++    ASSERT(masterId_ != candidateMasterId_);
++
++    EV << "####Handover starting:####" << endl;
++    EV << "current master: " << masterId_ << endl;
++    EV << "current RSSI: " << currentMasterRssi_ << endl;
++    EV << "candidate master: " << candidateMasterId_ << endl;
++    EV << "candidate RSSI: " << candidateMasterRssi_ << endl;
++    EV << "############" << endl;
++
++    if (candidateMasterRssi_ == 0)
++        EV << NOW << " LtePhyUe::triggerHandover - UE " << nodeId_ << " lost its connection to eNB " << masterId_ << ". Now detaching... " << endl;
++    else if (masterId_ == NODEID_NONE)
++        EV << NOW << " LtePhyUe::triggerHandover - UE " << nodeId_ << " is starting attachment procedure to eNB " << candidateMasterId_ << "... " << endl;
++    else
++        EV << NOW << " LtePhyUe::triggerHandover - UE " << nodeId_ << " is starting handover to eNB " << candidateMasterId_ << "... " << endl;
++
++    binder_->addUeHandoverTriggered(nodeId_);
++
++    // inform the UE's Ip2Nic module to start holding downstream packets
++    ip2nic_->triggerHandoverUe(candidateMasterId_);
++    binder_->removeHandoverTriggered(nodeId_);
++
++    // inform the eNB's Ip2Nic module to forward data to the target eNB
++    if (masterId_ != NODEID_NONE && candidateMasterId_ != NODEID_NONE) {
++        Ip2Nic *enbIp2Nic = check_and_cast<Ip2Nic *>(binder_->getNodeModule(masterId_)->getSubmodule("cellularNic")->getSubmodule("ip2nic"));
++        enbIp2Nic->triggerHandoverSource(nodeId_, candidateMasterId_);
++    }
++
++    double handoverLatency;
++    if (masterId_ == NODEID_NONE)                                                // attachment only
++        handoverLatency = handoverAttachment_;
++    else if (candidateMasterId_ == NODEID_NONE)                                                // detachment only
++        handoverLatency = handoverDetachment_;
++    else
++        handoverLatency = handoverDetachment_ + handoverAttachment_;
++
++    handoverTrigger_ = new cMessage("handoverTrigger");
++    scheduleAt(simTime() + handoverLatency, handoverTrigger_);
++}
++
++void LtePhyUe::doHandover()
++{
++    // if masterId_ == 0, it means the UE was not attached to any eNodeB, so it only has to perform attachment procedures
++    // if candidateMasterId_ == 0, it means the UE is detaching from its eNodeB, so it only has to perform detachment procedures
++
++    if (masterId_ != NODEID_NONE) {
++        // Delete Old Buffers
++        deleteOldBuffers(masterId_);
++
++        // amc calls
++        LteAmc *oldAmc = getAmcModule(masterId_);
++        oldAmc->detachUser(nodeId_, UL);
++        oldAmc->detachUser(nodeId_, DL);
++    }
++
++    if (candidateMasterId_ != NODEID_NONE) {
++        LteAmc *newAmc = getAmcModule(candidateMasterId_);
++        assert(newAmc != nullptr);
++        newAmc->attachUser(nodeId_, UL);
++        newAmc->attachUser(nodeId_, DL);
++    }
++
++    // binder calls
++    if (masterId_ != NODEID_NONE)
++        binder_->unregisterServingNode(masterId_, nodeId_);
++
++    if (candidateMasterId_ != NODEID_NONE) {
++        binder_->registerServingNode(candidateMasterId_, nodeId_);
++    }
++    binder_->updateUeInfoCellId(nodeId_, candidateMasterId_);
++
++    // @author Alessandro Noferi
++    if (hasCollector) {
++        binder_->moveUeCollector(nodeId_, masterId_, candidateMasterId_);
++    }
++
++    // change masterId and notify handover to the MAC layer
++    MacNodeId oldMaster = masterId_;
++    masterId_ = candidateMasterId_;
++    mac_->doHandover(candidateMasterId_);  // do MAC operations for handover
++    lastHandoverTime_ = simTime();
++    railwayA3PendingCellId_ = NODEID_NONE;
++
++    currentMasterRssi_ = candidateMasterRssi_;
++    hysteresisTh_ = updateHysteresisTh(currentMasterRssi_);
++
++    // update reference to master node's mobility module
++    if (masterId_ == NODEID_NONE)
++        masterMobility_ = nullptr;
++    else {
++        cModule *masterModule = binder_->getModuleByMacNodeId(masterId_);
++        masterMobility_ = check_and_cast<IMobility *>(masterModule->getSubmodule("mobility"));
++    }
++
++    // update cellInfo
++    if (oldMaster != NODEID_NONE)
++        cellInfo_->detachUser(nodeId_);
++
++    if (masterId_ != NODEID_NONE) {
++        LteMacEnb *newMacEnb = check_and_cast<LteMacEnb *>(binder_->getMacByNodeId(masterId_));
++        cellInfo_ = newMacEnb->getCellInfo();
++        cellInfo_->attachUser(nodeId_);
++    }
++
++    // update DL feedback generator
++    fbGen_->handleHandover(masterId_);
++
++    // collect stat
++    emit(servingCellSignal_, (long)masterId_);
++
++    if (masterId_ == NODEID_NONE)
++        EV << NOW << " LtePhyUe::doHandover - UE " << nodeId_ << " detached from the network" << endl;
++    else
++        EV << NOW << " LtePhyUe::doHandover - UE " << nodeId_ << " has completed handover to eNB " << masterId_ << "... " << endl;
++    binder_->removeUeHandoverTriggered(nodeId_);
++
++    // inform the UE's Ip2Nic module to forward held packets
++    ip2nic_->signalHandoverCompleteUe();
++
++    // inform the eNB's Ip2Nic module to forward data to the target eNB
++    if (oldMaster != NODEID_NONE && candidateMasterId_ != NODEID_NONE) {
++        Ip2Nic *enbIp2Nic = check_and_cast<Ip2Nic *>(binder_->getNodeModule(masterId_)->getSubmodule("cellularNic")->getSubmodule("ip2nic"));
++        enbIp2Nic->signalHandoverCompleteTarget(nodeId_, oldMaster);
++    }
++}
++
++// TODO: ***reorganize*** method
++void LtePhyUe::handleAirFrame(cMessage *msg)
++{
++    LteAirFrame *frame = static_cast<LteAirFrame *>(msg);
++    UserControlInfo *lteInfo = new UserControlInfo(frame->getAdditionalInfo());
++
++    connectedNodeId_ = masterId_;
++    EV << "LtePhy: received new LteAirFrame with ID " << frame->getId() << " from channel" << endl;
++
++    if (!binder_->nodeExists(lteInfo->getSourceId())) {
++        // source has left the simulation
++        delete msg;
++        return;
++    }
++
++    // check if the air frame was sent on a correct carrier frequency
++    GHz carrierFreq = lteInfo->getCarrierFrequency();
++    LteChannelModel *channelModel = getChannelModel(carrierFreq);
++    if (channelModel == nullptr) {
++        EV << "Received packet on carrier frequency not supported by this node. Delete it." << endl;
++        delete lteInfo;
++        delete frame;
++        return;
++    }
++
++    //Update coordinates of this user
++    if (lteInfo->getFrameType() == HANDOVERPKT) {
++        // check if the message is on another carrier frequency or handover is already in process
++        if (carrierFreq != primaryChannelModel_->getCarrierFrequency() || (handoverTrigger_ != nullptr && handoverTrigger_->isScheduled())) {
++            EV << "Received handover packet on a different carrier frequency than the primary cell. Delete it." << endl;
++            delete lteInfo;
++            delete frame;
++            return;
++        }
++
++        handoverHandler(frame, lteInfo);
++        return;
++    }
++
++    // Check if the frame is for us ( MacNodeId matches )
++    if (lteInfo->getDestId() != nodeId_) {
++        EV << "ERROR: Frame is not for us. Delete it." << endl;
++        EV << "Packet Type: " << phyFrameTypeToA((LtePhyFrameType)lteInfo->getFrameType()) << endl;
++        EV << "Frame MacNodeId: " << lteInfo->getDestId() << endl;
++        EV << "Local MacNodeId: " << nodeId_ << endl;
++        delete lteInfo;
++        delete frame;
++        return;
++    }
++
++    /*
++     * This could happen if the ue associates with a new master while the old one
++     * already scheduled a packet for him: the packet is in the air while the ue changes master.
++     * Event timing:      TTI x: packet scheduled and sent for UE (tx time = 1ms)
++     *                     TTI x+0.1: ue changes master
++     *                     TTI x+1: packet from old master arrives at ue
++     */
++    if (lteInfo->getSourceId() != masterId_) {
++        EV << "WARNING: frame from an old master during handover: deleted " << endl;
++        EV << "Source MacNodeId: " << lteInfo->getSourceId() << endl;
++        EV << "Master MacNodeId: " << masterId_ << endl;
++        delete frame;
++        return;
++    }
++
++    // send H-ARQ feedback up
++    if (lteInfo->getFrameType() == HARQPKT || lteInfo->getFrameType() == GRANTPKT || lteInfo->getFrameType() == RACPKT) {
++        handleControlMsg(frame, lteInfo);
++        return;
++    }
++    if ((lteInfo->getUserTxParams()) != nullptr) {
++        int cw = lteInfo->getCw();
++        if (lteInfo->getUserTxParams()->readCqiVector().size() == 1)
++            cw = 0;
++        double cqi = lteInfo->getUserTxParams()->readCqiVector()[cw];
++        emit(averageCqiDlSignal_, cqi);
++        recordCqi(cqi, DL);
++    }
++    // apply decider to received packet (DAS removed - single antenna only)
++    bool result = channelModel->isReceptionSuccessful(frame, lteInfo);
++
++    // update statistics
++    if (result)
++        numAirFrameReceived_++;
++    else
++        numAirFrameNotReceived_++;
++
++    EV << "Handled LteAirframe with ID " << frame->getId() << " with result "
++       << (result ? "RECEIVED" : "NOT RECEIVED") << endl;
++
++    auto pkt = check_and_cast<inet::Packet *>(frame->decapsulate());
++
++    // here frame has to be destroyed since it is no longer useful
++    delete frame;
++
++    // attach the decider result to the packet as control info
++    *(pkt->addTagIfAbsent<UserControlInfo>()) = *lteInfo;
++    delete lteInfo;
++
++    pkt->addTagIfAbsent<PhyReceptionInd>()->setDeciderResult(result);
++
++    // send decapsulated message along with result control info to upperGateOut_
++    send(pkt, upperGateOut_);
++
++    if (getEnvir()->isGUI())
++        updateDisplayString();
++}
++
++void LtePhyUe::handleUpperMessage(cMessage *msg)
++{
++    auto pkt = check_and_cast<inet::Packet *>(msg);
++    auto lteInfo = pkt->getTag<UserControlInfo>();
++
++    MacNodeId dest = lteInfo->getDestId();
++    if (dest != masterId_) {
++        // UE is not sending to its master!!
++        throw cRuntimeError("LtePhyUe::handleUpperMessage  Ue preparing to send message to %hu instead of its master (%hu)", num(dest), num(masterId_));
++    }
++
++    GHz carrierFreq = lteInfo->getCarrierFrequency();
++    LteChannelModel *channelModel = getChannelModel(carrierFreq);
++    if (channelModel == nullptr)
++        throw cRuntimeError("LtePhyUe::handleUpperMessage - Carrier frequency [%f] not supported by any channel model", carrierFreq.get());
++
++    if (lteInfo->getFrameType() == DATAPKT && (channelModel->isUplinkInterferenceEnabled() || channelModel->isD2DInterferenceEnabled())) {
++        // Store the RBs used for data transmission to the binder (for UL interference computation)
++        RbMap rbMap = lteInfo->getGrantedBlocks();
++        Remote antenna = MACRO;  // TODO fix for multi-antenna
++        binder_->storeUlTransmissionMap(channelModel->getCarrierFrequency(), antenna, rbMap, nodeId_, mac_->getMacCellId(), this, UL);
++    }
++
++    if (lteInfo->getFrameType() == DATAPKT && lteInfo->getUserTxParams() != nullptr) {
++        double cqi = lteInfo->getUserTxParams()->readCqiVector()[lteInfo->getCw()];
++        if (lteInfo->getDirection() == UL) {
++            emit(averageCqiUlSignal_, cqi);
++            recordCqi(cqi, UL);
++        }
++        else if (lteInfo->getDirection() == D2D)
++            emit(averageCqiD2DSignal_, cqi);
++    }
++
++    LtePhyBase::handleUpperMessage(msg);
++}
++
++void LtePhyUe::emitMobilityStats()
++{
++    // emit serving cell id
++    emit(servingCellSignal_, (long)masterId_);
++
++    if (masterMobility_) {
++        // emit distance from current serving cell
++        inet::Coord masterPos = masterMobility_->getCurrentPosition();
++        double distance = getRadioPosition().distance(masterPos);
++        emit(distanceSignal_, distance);
++    }
++
++    emitRailwayHandoverObservations();
++}
++
++double LtePhyUe::updateHysteresisTh(double v)
++{
++    if (hysteresisFactor_ == 0)
++        return 0;
++    else
++        return v / hysteresisFactor_;
++}
++
++void LtePhyUe::deleteOldBuffers(MacNodeId masterId)
++{
++    // Delete Mac Buffers
++
++    // delete macBuffer[nodeId_] at old master
++    LteMacEnb *masterMac = check_and_cast<LteMacEnb *>(binder_->getMacByNodeId(masterId));
++    masterMac->deleteQueues(nodeId_);
++
++    // delete queues for master at this ue
++    mac_->deleteQueues(masterId_);
++
++    // Delete Rlc UM Buffers
++
++    // delete UmTxQueue[nodeId_] at old master
++    LteRlcUm *masterRlcUm = check_and_cast<LteRlcUm *>(binder_->getRlcByNodeId(masterId, UM));
++    masterRlcUm->deleteQueues(nodeId_);
++
++    // delete queues for master at this ue
++    rlcUm_->deleteQueues(nodeId_);
++
++    // Delete PDCP Entities
++    // delete pdcpEntities[nodeId_] at old master
++    LtePdcpEnb *masterPdcp = check_and_cast<LtePdcpEnb *>(binder_->getPdcpByNodeId(masterId));
++    masterPdcp->deleteEntities(nodeId_);
++
++    // delete queues for master at this ue
++    pdcp_->deleteEntities(masterId_);
++}
++
++void LtePhyUe::sendFeedback(LteFeedbackDoubleVector fbDl, LteFeedbackDoubleVector fbUl, FeedbackRequest req)
++{
++    Enter_Method("SendFeedback");
++    EV << "LtePhyUe: feedback from Feedback Generator" << endl;
++
++    //Create a feedback packet
++    auto fbPkt = makeShared<LteFeedbackPkt>();
++    //Set the feedback
++    fbPkt->setLteFeedbackDoubleVectorDl(fbDl);
++    fbPkt->setLteFeedbackDoubleVectorDl(fbUl);
++    fbPkt->setSourceNodeId(nodeId_);
++
++    auto pkt = new Packet("feedback_pkt");
++    pkt->insertAtFront(fbPkt);
++
++    UserControlInfo *uinfo = new UserControlInfo();
++    uinfo->setSourceId(nodeId_);
++    uinfo->setDestId(masterId_);
++    uinfo->setFrameType(FEEDBACKPKT);
++    // create LteAirFrame and encapsulate a feedback packet
++    LteAirFrame *frame = new LteAirFrame("feedback_pkt");
++    frame->encapsulate(check_and_cast<cPacket *>(pkt));
++    uinfo->setFeedbackReq(req);
++    uinfo->setDirection(UL);
++    simtime_t signalLength = TTI;
++    uinfo->setTxPower(txPower_);
++    // initialize frame fields
++
++    frame->setSchedulingPriority(airFramePriority_);
++    frame->setDuration(signalLength);
++
++    uinfo->setCoord(getRadioPosition());
++
++    //TODO access speed data Update channel index
++    lastFeedback_ = NOW;
++
++    // send one feedback packet for each carrier
++    for (auto& cm : channelModel_) {
++        GHz carrierFrequency = cm.first;
++        LteAirFrame *carrierFrame = frame->dup();
++        UserControlInfo *carrierInfo = uinfo->dup();
++        carrierInfo->setCarrierFrequency(carrierFrequency);
++        carrierFrame->setControlInfo(carrierInfo);
++
++        EV << "LtePhy: " << nodeTypeToA(nodeType_) << " with id "
++           << nodeId_ << " sending feedback to the air channel for carrier " << carrierFrequency << endl;
++        sendUnicast(carrierFrame);
++    }
++
++    delete frame;
++    delete uinfo;
++}
++
++void LtePhyUe::recordCqi(unsigned int sample, Direction dir)
++{
++    if (dir == DL) {
++        cqiDlSamples_.push_back(sample);
++        cqiDlSum_ += sample;
++        cqiDlCount_++;
++    }
++    if (dir == UL) {
++        cqiUlSamples_.push_back(sample);
++        cqiUlSum_ += sample;
++        cqiUlCount_++;
++    }
++}
++
++double LtePhyUe::getAverageCqi(Direction dir)
++{
++    if (dir == DL) {
++        if (cqiDlCount_ == 0)
++            return 0;
++        return (double)cqiDlSum_ / cqiDlCount_;
++    }
++    if (dir == UL) {
++        if (cqiUlCount_ == 0)
++            return 0;
++        return (double)cqiUlSum_ / cqiUlCount_;
++    }
++    throw cRuntimeError("Direction %d is not handled.", dir);
++}
++
++double LtePhyUe::getVarianceCqi(Direction dir)
++{
++    double avgCqi = getAverageCqi(dir);
++    double err, sum = 0;
++
++    if (dir == DL) {
++        for (short & cqiDlSample : cqiDlSamples_) {
++            err = avgCqi - cqiDlSample;
++            sum += (err * err);
++        }
++        return sum / cqiDlSamples_.size();
++    }
++    if (dir == UL) {
++        for (short & cqiUlSample : cqiUlSamples_) {
++            err = avgCqi - cqiUlSample;
++            sum += (err * err);
++        }
++        return sum / cqiUlSamples_.size();
++    }
++    throw cRuntimeError("Direction %d is not handled.", dir);
++}
++
++void LtePhyUe::finish()
++{
++    if (getSimulation()->getSimulationStage() != CTX_FINISH) {
++        // do this only during the deletion of the module during the simulation
++
++        // do this only if this PHY layer is connected to a serving base station
++        if (masterId_ != NODEID_NONE) {
++            // clear buffers
++            deleteOldBuffers(masterId_);
++
++            // amc calls
++            LteAmc *amc = getAmcModule(masterId_);
++            if (amc != nullptr) {
++                amc->detachUser(nodeId_, UL);
++                amc->detachUser(nodeId_, DL);
++            }
++
++            // binder call
++            binder_->unregisterServingNode(masterId_, nodeId_);
++
++            // cellInfo call
++            cellInfo_->detachUser(nodeId_);
++        }
++    }
++}
++
++} //namespace
++
+--- src/simu5g/stack/phy/LtePhyUe.ned.pre_policy_table	2026-06-04 11:25:37.845889200 +0800
++++ src/simu5g/stack/phy/LtePhyUe.ned	2026-06-04 11:45:38.687276905 +0800
+@@ -1,86 +1,106 @@
+-//
+-//                  Simu5G
+-//
+-// Copyright (C) 2019-2021 Giovanni Nardini, Giovanni Stea, Antonio Virdis et al. (University of Pisa)
+-// Copyright (C) 2022-2026 Giovanni Nardini, Giovanni Stea et al. (University of Pisa)
+-//
+-// This file is part of a software released under the license included in file
+-// "license.pdf". Please read LICENSE and README files before using it.
+-// The above files and the present reference are part of the software itself,
+-// and cannot be removed from it.
+-//
+-
+-
+-package simu5g.stack.phy;
+-
+-//
+-// Extends the ~LtePhyBase module by providing specific PHY functions
+-// on the User Equipment (UE) side. It ensures that frames received on the air interface
+-// are sourced from the serving eNodeB (eNB) and provides functions to manage the handover procedure,
+-// including periodic measurement of channel conditions to determine when a handover should
+-// occur. If enabled, the selection of the serving eNB at initialization is done dynamically
+-// based on radio conditions.
+-//
+-simple LtePhyUe extends LtePhyBase
+-{
+-    parameters:
+-        @class("LtePhyUe");
+-
+-        bool dynamicCellAssociation = default(false);
+-
+-        string rlcUmModule = default("^.rlc.um"); // or "^.nrRlc.um"
+-        string pdcpModule = default("^.pdcp");
+-        string ip2nicModule = default("^.ip2nic");
+-        string feedbackGeneratorModule = default("^.dlFbGen"); // TODO or "^.nrDlFbGen"
+-
+-        // if true, get minRssi from PhyPisaData
+-        bool minRssiDefault = default(true);
+-
+-        // configurable minimum threshold RSSI for attaching to an eNB (meaningful only if minRssiDefault==false)
+-        double minRssi @unit("dB") = default(-99.0dB);
+-
+-        bool hasCollector = default(false); // true when node has a collector module (ueCollector/nrUeCollector) for this PHY module
+-
+-        // Railway/RL handover extensions. Defaults preserve the original Simu5G behavior.
+-        double hysteresisFactor = default(10);
+-        double handoverDelta @unit(s) = default(0.00001s);
+-        bool railwayA3TttHandover = default(false);
++//
++//                  Simu5G
++//
++// Copyright (C) 2019-2021 Giovanni Nardini, Giovanni Stea, Antonio Virdis et al. (University of Pisa)
++// Copyright (C) 2022-2026 Giovanni Nardini, Giovanni Stea et al. (University of Pisa)
++//
++// This file is part of a software released under the license included in file
++// "license.pdf". Please read LICENSE and README files before using it.
++// The above files and the present reference are part of the software itself,
++// and cannot be removed from it.
++//
++
++
++package simu5g.stack.phy;
++
++//
++// Extends the ~LtePhyBase module by providing specific PHY functions
++// on the User Equipment (UE) side. It ensures that frames received on the air interface
++// are sourced from the serving eNodeB (eNB) and provides functions to manage the handover procedure,
++// including periodic measurement of channel conditions to determine when a handover should
++// occur. If enabled, the selection of the serving eNB at initialization is done dynamically
++// based on radio conditions.
++//
++simple LtePhyUe extends LtePhyBase
++{
++    parameters:
++        @class("LtePhyUe");
++
++        bool dynamicCellAssociation = default(false);
++
++        string rlcUmModule = default("^.rlc.um"); // or "^.nrRlc.um"
++        string pdcpModule = default("^.pdcp");
++        string ip2nicModule = default("^.ip2nic");
++        string feedbackGeneratorModule = default("^.dlFbGen"); // TODO or "^.nrDlFbGen"
++
++        // if true, get minRssi from PhyPisaData
++        bool minRssiDefault = default(true);
++
++        // configurable minimum threshold RSSI for attaching to an eNB (meaningful only if minRssiDefault==false)
++        double minRssi @unit("dB") = default(-99.0dB);
++
++        bool hasCollector = default(false); // true when node has a collector module (ueCollector/nrUeCollector) for this PHY module
++
++        // Railway/RL handover extensions. Defaults preserve the original Simu5G behavior.
++        double hysteresisFactor = default(10);
++        double handoverDelta @unit(s) = default(0.00001s);
++        bool railwayA3TttHandover = default(false);
+         double railwayA3Hysteresis @unit(dB) = default(3dB);
+         double railwayA3TimeToTrigger @unit(s) = default(0.16s);
+         double railwayA3MinNeighborRsrp @unit(dB) = default(-130dB);
+-
+-        //# Mobility and serving-cell statistics
+-        @signal[distance];
+-        @statistic[distance](title="distance between UE and serving base station"; unit="meters"; source="distance"; record=mean,vector);
+-
+-        @signal[servingCell];
+-        @statistic[servingCell](title="ID of the serving cell for the UE"; unit=""; source="servingCell"; record=vector);
+-
+-        //# Railway/RL handover observation statistics
+-        @signal[servingRsrp];
+-        @statistic[servingRsrp](title="RSRP from the serving cell"; unit="dB"; source="servingRsrp"; record=mean,vector);
+-
+-        @signal[neighborRsrp];
+-        @statistic[neighborRsrp](title="RSRP from the strongest non-serving cell"; unit="dB"; source="neighborRsrp"; record=mean,vector);
+-
++        bool railwayPolicyTableEnabled = default(false);
++        string railwayPolicyTablePath = default("");
++        double railwayPolicyUpdateInterval @unit(s) = default(0.05s);
++        double railwayPolicyNoise @unit(dBm) = default(-96dBm);
++
++        //# Mobility and serving-cell statistics
++        @signal[distance];
++        @statistic[distance](title="distance between UE and serving base station"; unit="meters"; source="distance"; record=mean,vector);
++
++        @signal[servingCell];
++        @statistic[servingCell](title="ID of the serving cell for the UE"; unit=""; source="servingCell"; record=vector);
++
++        //# Railway/RL handover observation statistics
++        @signal[servingRsrp];
++        @statistic[servingRsrp](title="RSRP from the serving cell"; unit="dB"; source="servingRsrp"; record=mean,vector);
++
++        @signal[neighborRsrp];
++        @statistic[neighborRsrp](title="RSRP from the strongest non-serving cell"; unit="dB"; source="neighborRsrp"; record=mean,vector);
++
+         @signal[deltaRsrp];
+         @statistic[deltaRsrp](title="neighborRsrp minus servingRsrp"; unit="dB"; source="deltaRsrp"; record=mean,vector);
+ 
++        @signal[servingSinr];
++        @statistic[servingSinr](title="SINR proxy used by railway policy table"; unit="dB"; source="servingSinr"; record=mean,vector);
++
+         @signal[bestNeighborCell];
+         @statistic[bestNeighborCell](title="ID of the strongest non-serving cell"; unit=""; source="bestNeighborCell"; record=vector);
++
++        @signal[uePositionX];
++        @statistic[uePositionX](title="UE x coordinate"; unit="m"; source="uePositionX"; record=mean,vector);
++
++        @signal[ueSpeed];
++        @statistic[ueSpeed](title="UE speed magnitude"; unit="mps"; source="ueSpeed"; record=mean,vector);
++
++        @signal[timeSinceLastHandover];
++        @statistic[timeSinceLastHandover](title="time elapsed since the last completed handover"; unit="s"; source="timeSinceLastHandover"; record=mean,vector);
+ 
+-        @signal[uePositionX];
+-        @statistic[uePositionX](title="UE x coordinate"; unit="m"; source="uePositionX"; record=mean,vector);
++        @signal[railwayPolicyAction];
++        @statistic[railwayPolicyAction](title="Action id selected from the railway policy table"; unit=""; source="railwayPolicyAction"; record=mean,vector);
+ 
+-        @signal[ueSpeed];
+-        @statistic[ueSpeed](title="UE speed magnitude"; unit="mps"; source="ueSpeed"; record=mean,vector);
++        @signal[railwayPolicyHys];
++        @statistic[railwayPolicyHys](title="Hysteresis selected from the railway policy table"; unit="dB"; source="railwayPolicyHys"; record=mean,vector);
+ 
+-        @signal[timeSinceLastHandover];
+-        @statistic[timeSinceLastHandover](title="time elapsed since the last completed handover"; unit="s"; source="timeSinceLastHandover"; record=mean,vector);
++        @signal[railwayPolicyTtt];
++        @statistic[railwayPolicyTtt](title="TTT selected from the railway policy table"; unit="s"; source="railwayPolicyTtt"; record=mean,vector);
++
++        @signal[railwayPolicyQ];
++        @statistic[railwayPolicyQ](title="Q value of the selected railway policy action"; unit=""; source="railwayPolicyQ"; record=mean,vector);
+ 
+         //# CQI statistics
+-        @signal[averageCqiDl];
+-        @statistic[averageCqiDl](title="Average Cqi reported in DL"; unit="cqi"; source="averageCqiDl"; record=mean,count,vector);
+-        @signal[averageCqiUl];
+-        @statistic[averageCqiUl](title="Average Cqi reported in UL"; unit="cqi"; source="averageCqiUl"; record=mean,count,vector);
+-}
++        @signal[averageCqiDl];
++        @statistic[averageCqiDl](title="Average Cqi reported in DL"; unit="cqi"; source="averageCqiDl"; record=mean,count,vector);
++        @signal[averageCqiUl];
++        @statistic[averageCqiUl](title="Average Cqi reported in UL"; unit="cqi"; source="averageCqiUl"; record=mean,count,vector);
++}
++
+--- simulations/nr/railway_handover/omnetpp.ini.pre_policy_table	2026-06-04 11:25:37.849889200 +0800
++++ simulations/nr/railway_handover/omnetpp.ini	2026-06-04 11:45:38.691276904 +0800
+@@ -1,300 +1,324 @@
+-[General]
+-abstract = true
+-**.routingRecorder.enabled = false
+-
+-############### Statistics ##################
+-output-scalar-file = ${resultdir}/${configname}/${iterationvars}-${repetition}.sca
+-output-vector-file = ${resultdir}/${configname}/${iterationvars}-${repetition}.vec
+-seed-set = ${repetition}
+-**.sctp.**.scalar-recording = false  # remove annoying statistics from SCTP
+-**.sctp.**.vector-recording = false  # remove annoying statistics from SCTP
+-**.vector-recording = true
+-
+-############### SCTP configuration ##################
+-**.sctp.nagleEnabled = false         # if true, transmission of small packets will be delayed on the X2
+-**.sctp.enableHeartbeats = false
+-
+-############### General PHY parameters ##############
+-**.downlinkInterference = true
+-**.uplinkInterference = true
+-**.ueTxPower = 26dBm
+-**.eNodeBTxPower = 46dBm
+-**.targetBler = 0.01
+-**.blerShift = 5
+-**.fbPeriod = 40tti   # reports CQI every 40ms
+-
+-############### IPv4 configurator config #################
+-*.configurator.config = xmldoc("./demo.xml")
+-
+-
+-#------------------------------------#
+-# Config MultiCell
+-#
+-# General configuration for the for a multicell NR Standalone deployment
+-#
+-[Config MultiCell]
+-network = simu5g.simulations.nr.networks.MultiCell_Standalone
+-sim-time-limit=20s
+-description = "Base configuration, do not run this config!"
+-abstract = true
+-
+-############# Floorplan parameters ################
+-**.mobility.constraintAreaMaxX = 1000m
+-**.mobility.constraintAreaMaxY = 750m
+-**.mobility.constraintAreaMinX = 0m
+-**.mobility.constraintAreaMinY = 250m
+-**.mobility.constraintAreaMinZ = 0m
+-**.mobility.constraintAreaMaxZ = 0m
+-**.mobility.initFromDisplayString = false
+-
+-############### CA configuration #################
+-*.carrierAggregation.numComponentCarriers = 1
+-*.carrierAggregation.componentCarrier[0].numerologyIndex = ${u=0}
+-*.carrierAggregation.componentCarrier[0].carrierFrequency = 2GHz
+-*.carrierAggregation.componentCarrier[0].numBands = ${numRbs=50}
+-
+-*.gnb*.cellularNic.numCarriers = 1
+-*.gnb*.cellularNic.channelModel[0].componentCarrierModule = "carrierAggregation.componentCarrier[0]"
+-*.ue[*].cellularNic.numCarriers = 1
+-*.ue[*].cellularNic.nrChannelModel[0].componentCarrierModule = "carrierAggregation.componentCarrier[0]"
+-
+-############### BS position #################
+-*.gnb1.mobility.initialX = 250m
+-*.gnb1.mobility.initialY = 500m
+-*.gnb2.mobility.initialX = 750m
+-*.gnb2.mobility.initialY = 500m
+-
+-############### X2 configuration #################
+-*.gnb*.numX2Apps = 1                                        # one x2App per peering node
+-*.gnb*.x2App[*].server.localPort = 5000 + ancestorIndex(1)  # Server ports (x2App[0]=5000, x2App[1]=5001, ...)
+-*.gnb1.x2App[0].client.connectAddress = "gnb2%x2ppp0"
+-*.gnb2.x2App[0].client.connectAddress = "gnb1%x2ppp0"
+-
+-############## UE configuration ##################
+-*.numUe = ${numUEs=1,10,30}
+-
+-# UEs associates to the best BS at the beginning of the simulation
+-*.ue[*].servingNodeId = 0
+-*.ue[*].nrServingNodeId = 1
+-**.dynamicCellAssociation = true
+-**.enableHandover = true
+-
+-############ UEs position #################
+-*.ue[*].mobility.typename = "LinearMobility"
+-*.ue[*].mobility.initialX = uniform(0m,1000m)
+-*.ue[*].mobility.initialY = uniform(250m,750m)
+-*.ue[*].mobility.speed = uniform(3mps,13.89mps)
+-#------------------------------------#
+-
+-
+-
+-#------------------------------------#
+-# Config CBR-DL
+-#
+-# Configuration with CBR DL traffic from a remote server to the UEs
+-#
+-[Config CBR-DL]
+-extends = MultiCell
+-description = "CBR DL traffic from remote server to UEs"
+-
+-# one UDP application for each user
+-*.ue[*].numApps = 1
+-
+-# the amount of UDP applications on server should be equal to (numUEs)*(ue[*].numApps)
+-*.server.numApps = ${numUEs}
+-
+-#============= Application Setup =============
+-*.ue[*].app[*].typename = "CbrReceiver"
+-*.ue[*].app[*].localPort = 3000
+-
+-*.server.app[*].typename = "CbrSender"
+-*.server.app[*].packetSize = 100B
+-*.server.app[*].samplingTime = 0.02s
+-*.server.app[*].destAddress = "ue[" + string(ancestorIndex(0)) + "]"
+-*.server.app[*].destPort = 3000
+-*.server.app[*].localPort = 3088+ancestorIndex(0)
+-*.server.app[*].startTime = uniform(0s,0.02s)
+-*.server.app[*].finishTime = uniform(19.9s,19.92s)
+-
+-#------------------------------------#
+-
+-
+-
+-#------------------------------------#
+-# Config CBR-UL
+-#
+-# Configuration with CBR UL traffic from the UEs to a remote server
+-#
+-[Config CBR-UL]
+-extends=MultiCell
+-description = "CBR UL traffic from UEs to remote server"
+-
+-# one UDP application for each user
+-*.ue[*].numApps = 1
+-
+-# the amount of UDP applications on server should be equal to (numUEs)*(ue[*].numApps)
+-*.server.numApps = ${numUEs}
+-
+-#============= Application Setup =============
+-*.server.app[*].typename = "CbrReceiver"
+-*.server.app[*].localPort = 3000 + ancestorIndex(0)
+-
+-*.ue[*].app[*].typename = "CbrSender"
+-*.ue[*].app[*].packetSize = 100B
+-*.ue[*].app[*].samplingTime = 0.02s
+-*.ue[*].app[*].destAddress = "server"
+-*.ue[*].app[*].destPort = 3000 + ancestorIndex(1)
+-*.ue[*].app[*].localPort = 3088+ancestorIndex(0)
+-*.ue[*].app[*].startTime = uniform(0s,0.02s)
+-*.ue[*].app[*].finishTime = uniform(19.9s,19.92s)
+-#------------------------------------#
+-[Config Railway-300-DL]
+-network = simu5g.simulations.nr.networks.MultiCell_Standalone
+-description = "Railway 3km two-gNB handover scenario, 300 km/h, single UE"
+-sim-time-limit = 36s
+-
+-############### Fixed NR carrier configuration ###############
+-*.carrierAggregation.numComponentCarriers = 1
+-*.carrierAggregation.componentCarrier[0].numerologyIndex = 0
+-*.carrierAggregation.componentCarrier[0].carrierFrequency = 2GHz
+-*.carrierAggregation.componentCarrier[0].numBands = 50
+-*.gnb*.cellularNic.numCarriers = 1
+-*.gnb*.cellularNic.channelModel[0].componentCarrierModule = "carrierAggregation.componentCarrier[0]"
+-*.ue[*].cellularNic.numCarriers = 1
+-*.ue[*].cellularNic.nrChannelModel[0].componentCarrierModule = "carrierAggregation.componentCarrier[0]"
+-
+-############### 3 km railway line area ###############
+-**.mobility.constraintAreaMinX = 0m
+-**.mobility.constraintAreaMaxX = 3100m
+-**.mobility.constraintAreaMinY = 400m
+-**.mobility.constraintAreaMaxY = 600m
+-**.mobility.constraintAreaMinZ = 0m
+-**.mobility.constraintAreaMaxZ = 30m
+-**.mobility.initFromDisplayString = false
+-
+-############### Two terminal gNBs, about 3 km apart ###############
+-*.gnb1.mobility.initialX = 0m
+-*.gnb1.mobility.initialY = 500m
+-*.gnb1.mobility.initialZ = 25m
+-*.gnb2.mobility.initialX = 3000m
+-*.gnb2.mobility.initialY = 500m
+-*.gnb2.mobility.initialZ = 25m
+-
+-############### X2 configuration ###############
+-*.gnb*.numX2Apps = 1
+-*.gnb*.x2App[*].server.localPort = 5000 + ancestorIndex(1)
+-*.gnb1.x2App[0].client.connectAddress = "gnb2%x2ppp0"
+-*.gnb2.x2App[0].client.connectAddress = "gnb1%x2ppp0"
+-
+-############### Single train UE ###############
+-*.numUe = 1
+-*.ue[0].servingNodeId = 0
+-*.ue[0].nrServingNodeId = 1
+-**.dynamicCellAssociation = true
+-**.enableHandover = true
+-*.ue[0].mobility.typename = "LinearMobility"
+-*.ue[0].mobility.initialX = 0m
+-*.ue[0].mobility.initialY = 500m
+-*.ue[0].mobility.initialZ = 1.5m
+-*.ue[0].mobility.speed = 83.333mps
+-*.ue[0].mobility.initialMovementHeading = 0deg
+-
+-############### Downlink CBR traffic ###############
+-*.ue[0].numApps = 1
+-*.ue[0].app[0].typename = "CbrReceiver"
+-*.ue[0].app[0].localPort = 3000
+-*.server.numApps = 1
+-*.server.app[0].typename = "CbrSender"
+-*.server.app[0].packetSize = 100B
+-*.server.app[0].samplingTime = 0.02s
+-*.server.app[0].destAddress = "ue[0]"
+-*.server.app[0].destPort = 3000
+-*.server.app[0].localPort = 3088
+-*.server.app[0].startTime = 0.1s
+-*.server.app[0].finishTime = 35.9s
+-#------------------------------------#
+-# Railway sensitivity configurations
+-# These configs keep the same 3 km two-gNB railway layout and vary channel stress.
+-
+-[Config Railway-300-DL-TrackOffset]
+-extends = Railway-300-DL
+-description = "Railway 3km, 300 km/h, gNBs 150 m away from the track"
+-*.gnb1.mobility.initialY = 350m
+-*.gnb2.mobility.initialY = 350m
+-*.ue[0].mobility.initialY = 500m
+-**.mobility.constraintAreaMinY = 300m
+-**.mobility.constraintAreaMaxY = 550m
+-
+-[Config Railway-300-DL-WeakCoverage]
+-extends = Railway-300-DL-TrackOffset
+-description = "Railway 3km, weaker coverage via lower power and lower antenna height"
+-**.eNodeBTxPower = 40dBm
+-*.gnb1.mobility.initialZ = 15m
+-*.gnb2.mobility.initialZ = 15m
+-*.gnb*.cellularNic.channelModel[0].nodebHeight = 15m
+-*.ue[*].cellularNic.nrChannelModel[0].nodebHeight = 15m
+-*.gnb*.cellularNic.channelModel[0].antennGainEnB = 12dBi
+-*.ue[*].cellularNic.nrChannelModel[0].antennGainEnB = 12dBi
+-
+-[Config Railway-300-DL-HighNoise]
+-extends = Railway-300-DL-TrackOffset
+-description = "Railway 3km, higher receiver noise floor for stress testing"
+-*.gnb*.cellularNic.channelModel[0].thermalNoise = -96dBm
+-*.ue[*].cellularNic.nrChannelModel[0].thermalNoise = -96dBm
+-*.gnb*.cellularNic.channelModel[0].ueNoiseFigure = 9dBm
+-*.ue[*].cellularNic.nrChannelModel[0].ueNoiseFigure = 9dBm
+-
+-[Config Railway-300-DL-NlosFading]
+-extends = Railway-300-DL-TrackOffset
+-description = "Railway 3km, NLOS/fading/shadowing stress scenario"
+-*.gnb*.cellularNic.channelModel[0].shadowing = true
+-*.ue[*].cellularNic.nrChannelModel[0].shadowing = true
+-*.gnb*.cellularNic.channelModel[0].correlationDistance = 80m
+-*.ue[*].cellularNic.nrChannelModel[0].correlationDistance = 80m
+-*.gnb*.cellularNic.channelModel[0].dynamicLos = false
+-*.ue[*].cellularNic.nrChannelModel[0].dynamicLos = false
+-*.gnb*.cellularNic.channelModel[0].fixedLos = false
+-*.ue[*].cellularNic.nrChannelModel[0].fixedLos = false
+-*.gnb*.cellularNic.channelModel[0].fading = true
+-*.ue[*].cellularNic.nrChannelModel[0].fading = true
+-*.gnb*.cellularNic.channelModel[0].fadingType = "RAYLEIGH"
+-*.ue[*].cellularNic.nrChannelModel[0].fadingType = "RAYLEIGH"
+-*.gnb*.cellularNic.channelModel[0].numFadingPaths = 8
+-*.ue[*].cellularNic.nrChannelModel[0].numFadingPaths = 8
+-
+-[Config Railway-300-DL-HighInterference]
+-extends = Railway-300-DL-TrackOffset
+-description = "Railway 3km, stronger inter-cell interference and lower carrier resources"
+-*.carrierAggregation.componentCarrier[0].numBands = 25
+-**.downlinkInterference = true
+-**.uplinkInterference = true
+-*.gnb*.cellularNic.channelModel[0].downlinkInterference = true
+-*.ue[*].cellularNic.nrChannelModel[0].downlinkInterference = true
+-*.gnb*.cellularNic.channelModel[0].uplinkInterference = true
+-*.ue[*].cellularNic.nrChannelModel[0].uplinkInterference = true
+-*.gnb*.cellularNic.channelModel[0].bgCellInterference = true
+-*.ue[*].cellularNic.nrChannelModel[0].bgCellInterference = true
+-*.gnb*.cellularNic.channelModel[0].extCellInterference = true
+-*.ue[*].cellularNic.nrChannelModel[0].extCellInterference = true
+-
+-[Config Railway-300-DL-HeavyTraffic]
+-extends = Railway-300-DL-TrackOffset
+-description = "Railway 3km, heavier DL CBR traffic"
+-*.server.app[0].packetSize = 1000B
+-*.server.app[0].samplingTime = 0.005s
+-
++[General]
++abstract = true
++**.routingRecorder.enabled = false
++
++############### Statistics ##################
++output-scalar-file = ${resultdir}/${configname}/${iterationvars}-${repetition}.sca
++output-vector-file = ${resultdir}/${configname}/${iterationvars}-${repetition}.vec
++seed-set = ${repetition}
++**.sctp.**.scalar-recording = false  # remove annoying statistics from SCTP
++**.sctp.**.vector-recording = false  # remove annoying statistics from SCTP
++**.vector-recording = true
++
++############### SCTP configuration ##################
++**.sctp.nagleEnabled = false         # if true, transmission of small packets will be delayed on the X2
++**.sctp.enableHeartbeats = false
++
++############### General PHY parameters ##############
++**.downlinkInterference = true
++**.uplinkInterference = true
++**.ueTxPower = 26dBm
++**.eNodeBTxPower = 46dBm
++**.targetBler = 0.01
++**.blerShift = 5
++**.fbPeriod = 40tti   # reports CQI every 40ms
++
++############### IPv4 configurator config #################
++*.configurator.config = xmldoc("./demo.xml")
++
++
++#------------------------------------#
++# Config MultiCell
++#
++# General configuration for the for a multicell NR Standalone deployment
++#
++[Config MultiCell]
++network = simu5g.simulations.nr.networks.MultiCell_Standalone
++sim-time-limit=20s
++description = "Base configuration, do not run this config!"
++abstract = true
++
++############# Floorplan parameters ################
++**.mobility.constraintAreaMaxX = 1000m
++**.mobility.constraintAreaMaxY = 750m
++**.mobility.constraintAreaMinX = 0m
++**.mobility.constraintAreaMinY = 250m
++**.mobility.constraintAreaMinZ = 0m
++**.mobility.constraintAreaMaxZ = 0m
++**.mobility.initFromDisplayString = false
++
++############### CA configuration #################
++*.carrierAggregation.numComponentCarriers = 1
++*.carrierAggregation.componentCarrier[0].numerologyIndex = ${u=0}
++*.carrierAggregation.componentCarrier[0].carrierFrequency = 2GHz
++*.carrierAggregation.componentCarrier[0].numBands = ${numRbs=50}
++
++*.gnb*.cellularNic.numCarriers = 1
++*.gnb*.cellularNic.channelModel[0].componentCarrierModule = "carrierAggregation.componentCarrier[0]"
++*.ue[*].cellularNic.numCarriers = 1
++*.ue[*].cellularNic.nrChannelModel[0].componentCarrierModule = "carrierAggregation.componentCarrier[0]"
++
++############### BS position #################
++*.gnb1.mobility.initialX = 250m
++*.gnb1.mobility.initialY = 500m
++*.gnb2.mobility.initialX = 750m
++*.gnb2.mobility.initialY = 500m
++
++############### X2 configuration #################
++*.gnb*.numX2Apps = 1                                        # one x2App per peering node
++*.gnb*.x2App[*].server.localPort = 5000 + ancestorIndex(1)  # Server ports (x2App[0]=5000, x2App[1]=5001, ...)
++*.gnb1.x2App[0].client.connectAddress = "gnb2%x2ppp0"
++*.gnb2.x2App[0].client.connectAddress = "gnb1%x2ppp0"
++
++############## UE configuration ##################
++*.numUe = ${numUEs=1,10,30}
++
++# UEs associates to the best BS at the beginning of the simulation
++*.ue[*].servingNodeId = 0
++*.ue[*].nrServingNodeId = 1
++**.dynamicCellAssociation = true
++**.enableHandover = true
++
++############ UEs position #################
++*.ue[*].mobility.typename = "LinearMobility"
++*.ue[*].mobility.initialX = uniform(0m,1000m)
++*.ue[*].mobility.initialY = uniform(250m,750m)
++*.ue[*].mobility.speed = uniform(3mps,13.89mps)
++#------------------------------------#
++
++
++
++#------------------------------------#
++# Config CBR-DL
++#
++# Configuration with CBR DL traffic from a remote server to the UEs
++#
++[Config CBR-DL]
++extends = MultiCell
++description = "CBR DL traffic from remote server to UEs"
++
++# one UDP application for each user
++*.ue[*].numApps = 1
++
++# the amount of UDP applications on server should be equal to (numUEs)*(ue[*].numApps)
++*.server.numApps = ${numUEs}
++
++#============= Application Setup =============
++*.ue[*].app[*].typename = "CbrReceiver"
++*.ue[*].app[*].localPort = 3000
++
++*.server.app[*].typename = "CbrSender"
++*.server.app[*].packetSize = 100B
++*.server.app[*].samplingTime = 0.02s
++*.server.app[*].destAddress = "ue[" + string(ancestorIndex(0)) + "]"
++*.server.app[*].destPort = 3000
++*.server.app[*].localPort = 3088+ancestorIndex(0)
++*.server.app[*].startTime = uniform(0s,0.02s)
++*.server.app[*].finishTime = uniform(19.9s,19.92s)
++
++#------------------------------------#
++
++
++
++#------------------------------------#
++# Config CBR-UL
++#
++# Configuration with CBR UL traffic from the UEs to a remote server
++#
++[Config CBR-UL]
++extends=MultiCell
++description = "CBR UL traffic from UEs to remote server"
++
++# one UDP application for each user
++*.ue[*].numApps = 1
++
++# the amount of UDP applications on server should be equal to (numUEs)*(ue[*].numApps)
++*.server.numApps = ${numUEs}
++
++#============= Application Setup =============
++*.server.app[*].typename = "CbrReceiver"
++*.server.app[*].localPort = 3000 + ancestorIndex(0)
++
++*.ue[*].app[*].typename = "CbrSender"
++*.ue[*].app[*].packetSize = 100B
++*.ue[*].app[*].samplingTime = 0.02s
++*.ue[*].app[*].destAddress = "server"
++*.ue[*].app[*].destPort = 3000 + ancestorIndex(1)
++*.ue[*].app[*].localPort = 3088+ancestorIndex(0)
++*.ue[*].app[*].startTime = uniform(0s,0.02s)
++*.ue[*].app[*].finishTime = uniform(19.9s,19.92s)
++#------------------------------------#
++[Config Railway-300-DL]
++network = simu5g.simulations.nr.networks.MultiCell_Standalone
++description = "Railway 3km two-gNB handover scenario, 300 km/h, single UE"
++sim-time-limit = 36s
++
++############### Fixed NR carrier configuration ###############
++*.carrierAggregation.numComponentCarriers = 1
++*.carrierAggregation.componentCarrier[0].numerologyIndex = 0
++*.carrierAggregation.componentCarrier[0].carrierFrequency = 2GHz
++*.carrierAggregation.componentCarrier[0].numBands = 50
++*.gnb*.cellularNic.numCarriers = 1
++*.gnb*.cellularNic.channelModel[0].componentCarrierModule = "carrierAggregation.componentCarrier[0]"
++*.ue[*].cellularNic.numCarriers = 1
++*.ue[*].cellularNic.nrChannelModel[0].componentCarrierModule = "carrierAggregation.componentCarrier[0]"
++
++############### 3 km railway line area ###############
++**.mobility.constraintAreaMinX = 0m
++**.mobility.constraintAreaMaxX = 3100m
++**.mobility.constraintAreaMinY = 400m
++**.mobility.constraintAreaMaxY = 600m
++**.mobility.constraintAreaMinZ = 0m
++**.mobility.constraintAreaMaxZ = 30m
++**.mobility.initFromDisplayString = false
++
++############### Two terminal gNBs, about 3 km apart ###############
++*.gnb1.mobility.initialX = 0m
++*.gnb1.mobility.initialY = 500m
++*.gnb1.mobility.initialZ = 25m
++*.gnb2.mobility.initialX = 3000m
++*.gnb2.mobility.initialY = 500m
++*.gnb2.mobility.initialZ = 25m
++
++############### X2 configuration ###############
++*.gnb*.numX2Apps = 1
++*.gnb*.x2App[*].server.localPort = 5000 + ancestorIndex(1)
++*.gnb1.x2App[0].client.connectAddress = "gnb2%x2ppp0"
++*.gnb2.x2App[0].client.connectAddress = "gnb1%x2ppp0"
++
++############### Single train UE ###############
++*.numUe = 1
++*.ue[0].servingNodeId = 0
++*.ue[0].nrServingNodeId = 1
++**.dynamicCellAssociation = true
++**.enableHandover = true
++*.ue[0].mobility.typename = "LinearMobility"
++*.ue[0].mobility.initialX = 0m
++*.ue[0].mobility.initialY = 500m
++*.ue[0].mobility.initialZ = 1.5m
++*.ue[0].mobility.speed = 83.333mps
++*.ue[0].mobility.initialMovementHeading = 0deg
++
++############### Downlink CBR traffic ###############
++*.ue[0].numApps = 1
++*.ue[0].app[0].typename = "CbrReceiver"
++*.ue[0].app[0].localPort = 3000
++*.server.numApps = 1
++*.server.app[0].typename = "CbrSender"
++*.server.app[0].packetSize = 100B
++*.server.app[0].samplingTime = 0.02s
++*.server.app[0].destAddress = "ue[0]"
++*.server.app[0].destPort = 3000
++*.server.app[0].localPort = 3088
++*.server.app[0].startTime = 0.1s
++*.server.app[0].finishTime = 35.9s
++#------------------------------------#
++# Railway sensitivity configurations
++# These configs keep the same 3 km two-gNB railway layout and vary channel stress.
++
++[Config Railway-300-DL-TrackOffset]
++extends = Railway-300-DL
++description = "Railway 3km, 300 km/h, gNBs 150 m away from the track"
++*.gnb1.mobility.initialY = 350m
++*.gnb2.mobility.initialY = 350m
++*.ue[0].mobility.initialY = 500m
++**.mobility.constraintAreaMinY = 300m
++**.mobility.constraintAreaMaxY = 550m
++
++[Config Railway-300-DL-WeakCoverage]
++extends = Railway-300-DL-TrackOffset
++description = "Railway 3km, weaker coverage via lower power and lower antenna height"
++**.eNodeBTxPower = 40dBm
++*.gnb1.mobility.initialZ = 15m
++*.gnb2.mobility.initialZ = 15m
++*.gnb*.cellularNic.channelModel[0].nodebHeight = 15m
++*.ue[*].cellularNic.nrChannelModel[0].nodebHeight = 15m
++*.gnb*.cellularNic.channelModel[0].antennGainEnB = 12dBi
++*.ue[*].cellularNic.nrChannelModel[0].antennGainEnB = 12dBi
++
++[Config Railway-300-DL-HighNoise]
++extends = Railway-300-DL-TrackOffset
++description = "Railway 3km, higher receiver noise floor for stress testing"
++*.gnb*.cellularNic.channelModel[0].thermalNoise = -96dBm
++*.ue[*].cellularNic.nrChannelModel[0].thermalNoise = -96dBm
++*.gnb*.cellularNic.channelModel[0].ueNoiseFigure = 9dBm
++*.ue[*].cellularNic.nrChannelModel[0].ueNoiseFigure = 9dBm
++
++[Config Railway-300-DL-NlosFading]
++extends = Railway-300-DL-TrackOffset
++description = "Railway 3km, NLOS/fading/shadowing stress scenario"
++*.gnb*.cellularNic.channelModel[0].shadowing = true
++*.ue[*].cellularNic.nrChannelModel[0].shadowing = true
++*.gnb*.cellularNic.channelModel[0].correlationDistance = 80m
++*.ue[*].cellularNic.nrChannelModel[0].correlationDistance = 80m
++*.gnb*.cellularNic.channelModel[0].dynamicLos = false
++*.ue[*].cellularNic.nrChannelModel[0].dynamicLos = false
++*.gnb*.cellularNic.channelModel[0].fixedLos = false
++*.ue[*].cellularNic.nrChannelModel[0].fixedLos = false
++*.gnb*.cellularNic.channelModel[0].fading = true
++*.ue[*].cellularNic.nrChannelModel[0].fading = true
++*.gnb*.cellularNic.channelModel[0].fadingType = "RAYLEIGH"
++*.ue[*].cellularNic.nrChannelModel[0].fadingType = "RAYLEIGH"
++*.gnb*.cellularNic.channelModel[0].numFadingPaths = 8
++*.ue[*].cellularNic.nrChannelModel[0].numFadingPaths = 8
++
++[Config Railway-300-DL-HighInterference]
++extends = Railway-300-DL-TrackOffset
++description = "Railway 3km, stronger inter-cell interference and lower carrier resources"
++*.carrierAggregation.componentCarrier[0].numBands = 25
++**.downlinkInterference = true
++**.uplinkInterference = true
++*.gnb*.cellularNic.channelModel[0].downlinkInterference = true
++*.ue[*].cellularNic.nrChannelModel[0].downlinkInterference = true
++*.gnb*.cellularNic.channelModel[0].uplinkInterference = true
++*.ue[*].cellularNic.nrChannelModel[0].uplinkInterference = true
++*.gnb*.cellularNic.channelModel[0].bgCellInterference = true
++*.ue[*].cellularNic.nrChannelModel[0].bgCellInterference = true
++*.gnb*.cellularNic.channelModel[0].extCellInterference = true
++*.ue[*].cellularNic.nrChannelModel[0].extCellInterference = true
++
++[Config Railway-300-DL-HeavyTraffic]
++extends = Railway-300-DL-TrackOffset
++description = "Railway 3km, heavier DL CBR traffic"
++*.server.app[0].packetSize = 1000B
++*.server.app[0].samplingTime = 0.005s
++
+ [Config Railway-300-DL-Stress]
+ extends = Railway-300-DL-NlosFading
+ description = "Railway 3km, combined weak coverage, high noise, reduced resources, and heavier traffic"
+-**.eNodeBTxPower = 40dBm
+-*.carrierAggregation.componentCarrier[0].numBands = 25
+-*.gnb1.mobility.initialZ = 15m
+-*.gnb2.mobility.initialZ = 15m
+-*.gnb*.cellularNic.channelModel[0].nodebHeight = 15m
+-*.ue[*].cellularNic.nrChannelModel[0].nodebHeight = 15m
+-*.gnb*.cellularNic.channelModel[0].thermalNoise = -96dBm
+-*.ue[*].cellularNic.nrChannelModel[0].thermalNoise = -96dBm
++**.eNodeBTxPower = 40dBm
++*.carrierAggregation.componentCarrier[0].numBands = 25
++*.gnb1.mobility.initialZ = 15m
++*.gnb2.mobility.initialZ = 15m
++*.gnb*.cellularNic.channelModel[0].nodebHeight = 15m
++*.ue[*].cellularNic.nrChannelModel[0].nodebHeight = 15m
++*.gnb*.cellularNic.channelModel[0].thermalNoise = -96dBm
++*.ue[*].cellularNic.nrChannelModel[0].thermalNoise = -96dBm
+ *.gnb*.cellularNic.channelModel[0].antennGainEnB = 12dBi
+ *.ue[*].cellularNic.nrChannelModel[0].antennGainEnB = 12dBi
+ *.server.app[0].packetSize = 1000B
+ *.server.app[0].samplingTime = 0.005s
++
++[Config Railway-300-DL-FixedA3]
++extends = Railway-300-DL-TrackOffset
++description = "Railway 3km fixed A3+TTT baseline, Hys=3 dB, TTT=160 ms"
++result-dir = results/RailwayPolicyCompare
++**.cellularNic.nrPhy.railwayA3TttHandover = true
++**.cellularNic.nrPhy.railwayA3Hysteresis = 3dB
++**.cellularNic.nrPhy.railwayA3TimeToTrigger = 0.16s
++**.cellularNic.nrPhy.railwayA3MinNeighborRsrp = -130dB
++**.cellularNic.nrPhy.railwayPolicyTableEnabled = false
++
++[Config Railway-300-DL-RLTable]
++extends = Railway-300-DL-TrackOffset
++description = "Railway 3km RL policy_table controlled A3+TTT"
++result-dir = results/RailwayPolicyCompare
++**.cellularNic.nrPhy.railwayA3TttHandover = true
++**.cellularNic.nrPhy.railwayA3Hysteresis = 3dB
++**.cellularNic.nrPhy.railwayA3TimeToTrigger = 0.16s
++**.cellularNic.nrPhy.railwayA3MinNeighborRsrp = -130dB
++**.cellularNic.nrPhy.railwayPolicyTableEnabled = true
++**.cellularNic.nrPhy.railwayPolicyTablePath = "/mnt/c/Users/qichengshi/Desktop/RL_sim/results/policy_tables/policy_table.csv"
++**.cellularNic.nrPhy.railwayPolicyUpdateInterval = 0.05s
++**.cellularNic.nrPhy.railwayPolicyNoise = -96dBm
++
